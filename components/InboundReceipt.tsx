@@ -104,6 +104,7 @@ export const InboundReceipt: React.FC<InboundReceiptProps> = ({ onNavigate }) =>
       'Received': 'bg-blue-100 text-blue-700 border-blue-200',
       'Serialized': 'bg-purple-100 text-purple-700 border-purple-200',
       'QCPending': 'bg-amber-100 text-amber-700 border-amber-200',
+      'Disposition': 'bg-indigo-100 text-indigo-700 border-indigo-200',
       'Released': 'bg-green-100 text-green-700 border-green-200',
       'Blocked': 'bg-red-100 text-red-700 border-red-200',
       'Scrapped': 'bg-gray-100 text-gray-700 border-gray-200'
@@ -176,7 +177,7 @@ export const InboundReceipt: React.FC<InboundReceiptProps> = ({ onNavigate }) =>
            
            <div className="flex gap-2">
               {/* Process Button - Context Aware */}
-              {['Received', 'Serialized', 'QCPending'].includes(flow.state) && (
+              {['Received', 'Serialized', 'QCPending', 'Disposition'].includes(flow.state) && (
                  <button 
                    onClick={() => goToWork(flow.instanceId)}
                    className="bg-brand-600 text-white px-4 py-2 rounded-md font-bold text-xs hover:bg-brand-700 transition-colors shadow-sm flex items-center gap-2"

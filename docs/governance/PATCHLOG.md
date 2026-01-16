@@ -4,6 +4,8 @@
 
 | Patch ID | Patch Type | Intent | Status | Notes | Date |
 |:---|:---|:---|:---|:---|:---|
+| **V34-S3-GOV-FP-23** | Fix Patch | Fix Premature S3 Finalization | **STABLE** | Introduced 'Disposition' state; Enforced explicit release action after QC. | 2026-01-29 06:15 (IST) |
+| **V34-S3-GOV-FP-22** | Fix Patch | Explicit Serial QC Mapping | **STABLE** | Replaced QC slider with serial-level Pass/Fail selection; Enforced explicit disposition per item. | 2026-01-29 05:15 (IST) |
 | **V34-S3-GOV-FP-21** | Fix Patch | Fix QC Serial Disposition | **STABLE** | Implemented serial-level QC status mapping (Pass/Block); Corrected View page visibility. | 2026-01-29 04:30 (IST) |
 | **V34-S3-GOV-FP-20** | Fix Patch | Fix S3 Serialization Post-Gen | **STABLE** | Removed invalid scan step after Internal Generation; Added completion locking. | 2026-01-29 03:45 (IST) |
 | **V34-S3-GOV-FP-19** | Fix Patch | S3 Serialization Logic Fix | **STABLE** | Separated Internal Gen vs Scan Verification; Disabled auto-verify; Removed scan requirement for Internal Gen. | 2026-01-29 03:00 (IST) |

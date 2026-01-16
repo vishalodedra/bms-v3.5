@@ -1,3 +1,4 @@
+
 /**
  * Inbound Flow Transition Guards
  * Pure functions describing allowed state machine transitions for FLOW-003.
@@ -19,7 +20,7 @@ export function canQcComplete(current: InboundFlowState): boolean {
 }
 
 export function canRelease(current: InboundFlowState): boolean {
-  return current === "Blocked" || current === "QCPending";
+  return current === "Disposition" || current === "Blocked" || current === "QCPending";
 }
 
 export function canScrap(current: InboundFlowState): boolean {
@@ -35,11 +36,8 @@ export function nextStateOnSubmitQc(): InboundFlowState {
 }
 
 export function nextStateOnQcDecision(decision: "PASS" | "FAIL" | "SCRAP"): InboundFlowState {
-  switch (decision) {
-    case "PASS": return "Released";
-    case "FAIL": return "Blocked";
-    case "SCRAP": return "Scrapped";
-  }
+  // V34-S3-GOV-FP-23: Move to Disposition state after QC to allow explicit finalization
+  return "Disposition";
 }
 
 export function nextStateOnRelease(): InboundFlowState {

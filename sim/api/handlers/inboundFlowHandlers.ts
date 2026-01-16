@@ -101,7 +101,7 @@ export const submitInboundQc: ApiHandler = async (req) => {
  * POST /api/flows/inbound/complete-qc
  */
 export const completeInboundQc: ApiHandler = async (req) => {
-  const { instanceId, decision, remarks, qcUser, quantities } = parseBody<CompleteQcReq>(req);
+  const { instanceId, decision, remarks, qcUser, quantities, itemResults } = parseBody<CompleteQcReq>(req);
   const flow = getFlow(instanceId) as InboundFlowInstance | undefined;
 
   if (!flow || flow.flowId !== "FLOW-003") return err("NOT_FOUND", "Flow not found", 404);
@@ -112,20 +112,30 @@ export const completeInboundQc: ApiHandler = async (req) => {
   flow.qcAt = nowIso();
   flow.qcRemarks = remarks;
   
-  // Update serial items based on explicit pass/fail counts if provided
-  if (quantities) {
+  // V34-S3-GOV-FP-22: Explicit Serial Mapping
+  if (itemResults && itemResults.length > 0) {
+      const resultMap = new Map(itemResults.map(i => [i.serialNumber, i.status]));
+      
+      flow.serializedItems = flow.serializedItems.map(item => {
+          const newStatus = resultMap.get(item.serialNumber);
+          if (newStatus) {
+              return { ...item, status: newStatus };
+          }
+          // If not in result map (should not happen if frontend behaves), default based on lot decision
+          return { ...item, status: decision === 'PASS' ? 'PASSED' : 'BLOCKED' }; 
+      });
+  } 
+  // Fallback for legacy calls (should be deprecated)
+  else if (quantities) {
       const passLimit = quantities.pass;
       flow.serializedItems = flow.serializedItems.map((item, index) => {
-          // If we have passed items remaining, mark as passed
-          // We just take the first N items as Passed for the simulation
           if (index < passLimit) {
               return { ...item, status: "PASSED" };
           }
-          // The rest are Failed/Blocked
           return { ...item, status: "BLOCKED" };
       });
   } else {
-      // Fallback if no quantities provided (e.g. legacy call or full block)
+      // Hard fallback if no explicit details provided
       flow.serializedItems = flow.serializedItems.map(item => ({
         ...item,
         status: decision === "PASS" ? "PASSED" : "BLOCKED"

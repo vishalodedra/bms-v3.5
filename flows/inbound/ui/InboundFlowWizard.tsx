@@ -12,6 +12,8 @@
  * @updated V34-S3-GOV-FP-19 (Strict Method Separation & No Auto-Verify)
  * @updated V34-S3-GOV-FP-20 (Fix Post-Generation Flow)
  * @updated V34-S3-GOV-FP-21 (Fix Serial QC Disposition)
+ * @updated V34-S3-GOV-FP-22 (Explicit Serial QC Mapping)
+ * @updated V34-S3-GOV-FP-23 (Fix Premature Finalization)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -40,7 +42,9 @@ import {
   Search,
   Box,
   Wand2,
-  Plus
+  Plus,
+  Check,
+  XCircle
 } from 'lucide-react';
 import { FlowShell, FlowStep, FlowFooter } from '../../../components/flow';
 import { useDeviceLayout } from '../../../hooks/useDeviceLayout';
@@ -89,7 +93,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
   const isMobile = layout === 'mobile';
   const isTouch = isTablet || isMobile;
 
-  const isSerialized = model.state === 'Serialized' || model.state === 'QCPending' || model.state === 'Released' || model.state === 'Blocked';
+  const isSerialized = model.state === 'Serialized' || model.state === 'QCPending' || model.state === 'Disposition' || model.state === 'Released' || model.state === 'Blocked';
 
   // Load existing instance if provided
   useEffect(() => {
@@ -130,9 +134,14 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     // Map API serializedItems to UI model items
     const mappedItems: SerialItemState[] = instance.serializedItems?.map(item => ({
       serial: item.serialNumber,
-      isVerified: true // Committed items are verified by definition in this flow
+      isVerified: true, // Committed items are verified by definition in this flow
+      qcStatus: item.status === 'PASSED' ? 'PASS' : item.status === 'BLOCKED' ? 'FAIL' : undefined
     })) || [];
 
+    // Calculate pass/fail from loaded items if available
+    const passCount = mappedItems.filter(i => i.qcStatus === 'PASS').length;
+    // failCount is calculated dynamically in UI or can be derived here
+    
     setModel(m => ({
       ...m,
       instanceId: instance.instanceId,
@@ -140,6 +149,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       step: resolveInboundStepFromState(instance.state),
       receipt: instance.receipt,
       serializedItems: mappedItems.length > 0 ? mappedItems : m.serializedItems,
+      passCount: passCount > 0 ? passCount : m.passCount, // Preserve local if not from API
       isSyncing: false,
       error: null
     }));
@@ -316,9 +326,42 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       alert("Simulated: Evidence (Photo/Data) Captured");
   };
 
+  // Update QC status locally
+  const handleQcStatusToggle = (serial: string, status: 'PASS' | 'FAIL') => {
+      setModel(m => ({
+          ...m,
+          serializedItems: m.serializedItems.map(i => i.serial === serial ? { ...i, qcStatus: status } : i)
+      }));
+  };
+
+  const handleQcBulkSet = (status: 'PASS' | 'FAIL') => {
+      setModel(m => ({
+          ...m,
+          serializedItems: m.serializedItems.map(i => ({ ...i, qcStatus: status }))
+      }));
+  };
+
   const handleCompleteQc = async (decision: "PASS" | "FAIL" | "SCRAP") => {
     if (!model.instanceId || model.isSyncing) return;
+    
+    // Ensure all items have a status
+    const pendingItems = model.serializedItems.filter(i => !i.qcStatus);
+    if (pendingItems.length > 0) {
+        setModel(m => ({ ...m, error: `Please complete inspection for all items. ${pendingItems.length} pending.` }));
+        return;
+    }
+
     setModel(m => ({ ...m, isSyncing: true, error: null }));
+
+    // Count results for metrics
+    const passCount = model.serializedItems.filter(i => i.qcStatus === 'PASS').length;
+    const failCount = model.serializedItems.filter(i => i.qcStatus === 'FAIL').length;
+
+    // Explicit item results
+    const itemResults = model.serializedItems.map(i => ({
+        serialNumber: i.serial,
+        status: (i.qcStatus === 'PASS' ? 'PASSED' : 'BLOCKED') as 'PASSED' | 'BLOCKED'
+    }));
 
     try {
       const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.completeQc, {
@@ -328,10 +371,8 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
           decision, 
           qcUser: model.role,
           remarks: "Simulated pilot inspection results",
-          quantities: {
-            pass: model.passCount,
-            fail: model.receipt.quantityReceived - model.passCount
-          }
+          quantities: { pass: passCount, fail: failCount },
+          itemResults // V34-S3-GOV-FP-22: Explicit mapping
         })
       });
       const result = await res.json();
@@ -346,12 +387,39 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
             stageId: 'S3',
             actionId: evtMap[decision] || 'INBOUND_QC_FAILED',
             actorRole: model.role,
-            message: `QC Decision: ${decision}`
+            message: `QC Decision: ${decision}. Passed: ${passCount}, Failed: ${failCount}`
           });
       }
       else handleApiError(result.error);
     } catch (e) {
       handleApiError(e);
+    }
+  };
+
+  // V34-S3-GOV-FP-23: Explicit Finalization Action
+  const handleFinalRelease = async () => {
+    if (!model.instanceId || model.isSyncing) return;
+    setModel(m => ({ ...m, isSyncing: true, error: null }));
+
+    try {
+        const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.release, {
+            method: 'POST',
+            body: JSON.stringify({ instanceId: model.instanceId })
+        });
+        const result = await res.json();
+        if (result.ok) {
+            syncModel(result.data);
+            emitAuditEvent({
+                stageId: 'S3',
+                actionId: 'RELEASE_INVENTORY',
+                actorRole: model.role,
+                message: 'Inventory released to production (Workflow Finalized)'
+            });
+        } else {
+            handleApiError(result.error);
+        }
+    } catch (e) {
+        handleApiError(e);
     }
   };
 
@@ -751,49 +819,92 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
               {model.step === "QC" && (
                 <FlowStep 
                   stepTitle="Quality Control Inspection" 
-                  stepHint="Record pass/fail counts for the serialized lot."
+                  stepHint="Inspect each serial unit and record Pass/Fail status."
                 >
                   <ReceiptSummary />
-                  <div className={`mt-8 grid ${isTouch ? 'grid-cols-1 gap-10' : 'grid-cols-2 gap-8'}`}>
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-end">
-                        <label className={`${isTouch ? 'text-sm' : 'text-xs'} font-bold text-slate-600 uppercase`}>Passed Inspection</label>
-                        <span className={`${isTouch ? 'text-xl' : 'text-xs'} font-mono text-green-600 font-bold`}>{model.passCount}</span>
+                  
+                  {/* Inspection Header */}
+                  <div className="flex justify-between items-center mt-6 mb-4">
+                      <div>
+                          <h4 className="text-sm font-bold text-slate-800">Inspection List</h4>
+                          <span className="text-xs text-slate-500">Record explicit status for each item.</span>
                       </div>
-                      <input 
-                        type="range" 
-                        max={model.receipt.quantityReceived}
-                        className="w-full h-4 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-600"
-                        value={model.passCount}
-                        onChange={e => setModel(m => ({ ...m, passCount: parseInt(e.target.value) }))}
-                      />
-                      <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>0</span>
-                        <span>{model.receipt.quantityReceived}</span>
+                      <div className="flex gap-2">
+                          <button 
+                             onClick={() => handleQcBulkSet('PASS')}
+                             className="text-xs px-3 py-1.5 rounded bg-green-50 text-green-700 border border-green-200 font-bold hover:bg-green-100 transition-colors"
+                          >
+                             Mark All Pass
+                          </button>
+                          <button 
+                             onClick={() => handleQcBulkSet('FAIL')}
+                             className="text-xs px-3 py-1.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold hover:bg-red-100 transition-colors"
+                          >
+                             Mark All Fail
+                          </button>
                       </div>
-                    </div>
-                    
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-end">
-                        <label className={`${isTouch ? 'text-sm' : 'text-xs'} font-bold text-slate-600 uppercase`}>Flagged / Failed</label>
-                        <span className={`${isTouch ? 'text-xl' : 'text-xs'} font-mono text-red-600 font-bold`}>{model.receipt.quantityReceived - model.passCount}</span>
-                      </div>
-                      <div className={`w-full ${isTouch ? 'h-4' : 'h-2'} bg-slate-100 rounded-lg overflow-hidden relative border border-slate-200 shadow-inner`}>
-                        <div 
-                          className="h-full bg-red-500 transition-all duration-300"
-                          style={{ width: `${((model.receipt.quantityReceived - model.passCount) / (model.receipt.quantityReceived || 1)) * 100}%` }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-400 italic">Remaining units are automatically marked as failed.</p>
-                    </div>
                   </div>
 
-                  <div className="flex justify-between items-center mt-8">
+                  {/* Serial Inspection Table */}
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <div className="max-h-[400px] overflow-y-auto bg-white p-0">
+                          <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10 border-b border-slate-200">
+                                  <tr>
+                                      <th className="px-4 py-3 font-medium uppercase tracking-wider">Serial Number</th>
+                                      <th className="px-4 py-3 font-medium uppercase tracking-wider text-center">Status</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                  {model.serializedItems.map((item, idx) => (
+                                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                          <td className="px-4 py-3 font-mono text-slate-700 font-medium">
+                                              {item.serial}
+                                          </td>
+                                          <td className="px-4 py-2 text-center">
+                                              <div className="flex justify-center gap-1 bg-slate-100 p-0.5 rounded-md w-fit mx-auto">
+                                                  <button 
+                                                      onClick={() => handleQcStatusToggle(item.serial, 'PASS')}
+                                                      className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${
+                                                          item.qcStatus === 'PASS' 
+                                                          ? 'bg-white text-green-600 shadow-sm border border-green-200' 
+                                                          : 'text-slate-400 hover:text-slate-600'
+                                                      }`}
+                                                  >
+                                                      PASS
+                                                  </button>
+                                                  <button 
+                                                      onClick={() => handleQcStatusToggle(item.serial, 'FAIL')}
+                                                      className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${
+                                                          item.qcStatus === 'FAIL' 
+                                                          ? 'bg-white text-red-600 shadow-sm border border-red-200' 
+                                                          : 'text-slate-400 hover:text-slate-600'
+                                                      }`}
+                                                  >
+                                                      FAIL
+                                                  </button>
+                                              </div>
+                                          </td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+
+                  {/* Summary Counts */}
+                  <div className="mt-4 flex gap-4 text-xs font-bold border-t border-slate-200 pt-4">
+                      <span className="text-green-600">Passed: {model.serializedItems.filter(i => i.qcStatus === 'PASS').length}</span>
+                      <span className="text-red-600">Failed: {model.serializedItems.filter(i => i.qcStatus === 'FAIL').length}</span>
+                      <span className="text-slate-400">Pending: {model.serializedItems.filter(i => !i.qcStatus).length}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center mt-6">
                       <div className="p-3 bg-blue-50 border border-blue-200 rounded flex gap-3 flex-1 mr-4">
                         <ClipboardCheck className="text-blue-600 shrink-0" size={isTouch ? 24 : 20} />
                         <div>
                            <h4 className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-blue-900`}>Standard QC Check: AIS-156</h4>
-                           <p className="text-xs text-blue-700 mt-0.5">Visual damage, dimension check, and OCV sampling required.</p>
+                           <p className="text-xs text-blue-700 mt-0.5">Verify physical integrity and electrical parameters.</p>
                         </div>
                       </div>
                       <button 
@@ -824,25 +935,50 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                        <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 shadow-inner ${
                           model.state === 'Released' ? 'bg-green-100 text-green-600' :
                           model.state === 'Blocked' ? 'bg-amber-100 text-amber-700' :
+                          model.state === 'Disposition' ? 'bg-blue-100 text-blue-700' :
                           'bg-red-100 text-red-600'
                        }`}>
-                          {model.state === 'Released' ? <ShieldCheck size={40} /> : <AlertTriangle size={40} />}
+                          {model.state === 'Released' ? <ShieldCheck size={40} /> : 
+                           model.state === 'Disposition' ? <ClipboardCheck size={40} /> :
+                           <AlertTriangle size={40} />}
                        </div>
-                       <h3 className={`${isTouch ? 'text-3xl' : 'text-2xl'} font-bold text-slate-800 uppercase tracking-tight`}>{model.state}</h3>
+                       <h3 className={`${isTouch ? 'text-3xl' : 'text-2xl'} font-bold text-slate-800 uppercase tracking-tight`}>
+                         {model.state === 'Disposition' ? 'Pending Disposition' : model.state}
+                       </h3>
                        <p className="text-slate-500 max-w-sm mt-2 text-sm leading-relaxed">
-                          Lot <strong>{model.receipt.grnNumber}</strong> has been processed. 
-                          {model.state === 'Released' ? ' Materials are now available for Batch Sourcing.' : ' Lot is restricted from production use.'}
+                          Lot <strong>{model.receipt.grnNumber}</strong> status. 
+                          {model.state === 'Released' ? ' Materials are available for Batch Sourcing.' : 
+                           model.state === 'Disposition' ? ' Awaiting final release decision.' :
+                           ' Lot is restricted from production use.'}
                        </p>
                     </div>
                     <ReceiptSummary />
+                    
+                    {/* V34-S3-GOV-FP-23: Explicit Release Action */}
+                    {model.state === 'Disposition' && (
+                        <div className="mt-8 flex justify-center">
+                            <button 
+                                onClick={handleFinalRelease}
+                                disabled={model.role !== 'Stores' && model.role !== 'Supervisor' || model.isSyncing}
+                                className="px-6 py-3 bg-brand-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-brand-700 transition-all flex items-center gap-2 disabled:opacity-50"
+                            >
+                                <CheckCircle2 size={16} /> Confirm Release to Production
+                            </button>
+                        </div>
+                    )}
+
                     <div className={`mt-6 grid ${isTouch ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
                        <div className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center">
                           <span className="text-xs font-bold text-slate-500 uppercase">QC Result</span>
-                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-green-600`}>{model.passCount} OK</span>
+                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-green-600`}>
+                              {model.serializedItems.filter(i => i.qcStatus === 'PASS').length} OK
+                          </span>
                        </div>
                        <div className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center">
                           <span className="text-xs font-bold text-slate-500 uppercase">Failed</span>
-                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-red-600`}>{model.receipt.quantityReceived - model.passCount} BLOCKED</span>
+                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-red-600`}>
+                              {model.serializedItems.filter(i => i.qcStatus === 'FAIL').length} BLOCKED
+                          </span>
                        </div>
                     </div>
                  </FlowStep>
@@ -899,14 +1035,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                       disabled={model.role !== 'QA' || model.isSyncing}
                       className={`flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded font-bold text-sm hover:bg-green-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
                     >
-                      Release Lot <CheckCircle2 size={16} />
-                    </button>
-                    <button 
-                      onClick={() => handleCompleteQc("FAIL")}
-                      disabled={model.role !== 'QA' || model.isSyncing}
-                      className={`flex items-center justify-center gap-2 px-6 py-3 bg-amber-600 text-white rounded font-bold text-sm hover:bg-amber-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
-                    >
-                      Block Lot <AlertTriangle size={16} />
+                      Complete QC <CheckCircle2 size={16} />
                     </button>
                   </div>
                 </>

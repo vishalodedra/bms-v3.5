@@ -12,6 +12,7 @@ export type InboundWizardStepId = "RECEIPT" | "SERIALIZATION" | "QC" | "DISPOSIT
 export interface SerialItemState {
   serial: string;
   isVerified: boolean;
+  qcStatus?: 'PASS' | 'FAIL'; // V34-S3-GOV-FP-22: Local QC state
 }
 
 export interface InboundWizardModel {
@@ -63,6 +64,7 @@ export function resolveInboundStepFromState(state: InboundFlowState): InboundWiz
       return "SERIALIZATION";
     case "QCPending":
       return "QC";
+    case "Disposition": // V34-S3-GOV-FP-23: Explicit disposition step
     case "Released":
     case "Blocked":
     case "Scrapped":

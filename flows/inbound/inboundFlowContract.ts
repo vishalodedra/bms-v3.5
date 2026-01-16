@@ -11,6 +11,7 @@ export type InboundFlowState =
   | "Received"
   | "Serialized"
   | "QCPending"
+  | "Disposition"
   | "Released"
   | "Blocked"
   | "Scrapped";
@@ -76,6 +77,7 @@ export interface CompleteQcReq {
   instanceId: EntityId;
   decision: "PASS" | "FAIL" | "SCRAP";
   quantities?: { pass: number; fail: number };
+  itemResults?: { serialNumber: string; status: "PASSED" | "BLOCKED" }[]; // V34-S3-GOV-FP-22: Explicit mapping
   remarks?: string;
   qcUser: string;
 }
