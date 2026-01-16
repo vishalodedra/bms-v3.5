@@ -1,9 +1,17 @@
+
 /**
  * Inbound Flow Wizard (FLOW-003)
  * Standardized step-wizard for Material Receipt, Serialization & QC.
  * Wired to simulated /api/flows/inbound/* endpoints.
  * @foundation V34-S3-FLOW-003-PP-04
- * @updated V34-S3-FLOW-003-PP-03 (Tablet-First Layout)
+ * @updated V34-S3-GOV-FP-13 (Restored Scanning & Serialization Features)
+ * @updated V34-S3-GOV-FP-14 (Added PO & Supplier Lot)
+ * @updated V34-S3-GOV-FP-16 (Explicit Serial Generation)
+ * @updated V34-S3-GOV-FP-17 (Visible Serial List & Scan Verification)
+ * @updated V34-S3-GOV-FP-18 (Manual Scan & List Position Fix)
+ * @updated V34-S3-GOV-FP-19 (Strict Method Separation & No Auto-Verify)
+ * @updated V34-S3-GOV-FP-20 (Fix Post-Generation Flow)
+ * @updated V34-S3-GOV-FP-21 (Fix Serial QC Disposition)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -25,7 +33,14 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  LayoutList
+  LayoutList,
+  ScanLine,
+  Printer,
+  Camera,
+  Search,
+  Box,
+  Wand2,
+  Plus
 } from 'lucide-react';
 import { FlowShell, FlowStep, FlowFooter } from '../../../components/flow';
 import { useDeviceLayout } from '../../../hooks/useDeviceLayout';
@@ -39,9 +54,11 @@ import {
 import { 
   InboundWizardModel, 
   createDefaultInboundWizardModel,
-  resolveInboundStepFromState
+  resolveInboundStepFromState,
+  SerialItemState
 } from './inboundWizardModel';
 import { apiFetch } from '../../../services/apiHarness';
+import { emitAuditEvent } from '../../../utils/auditEvents';
 
 interface InboundFlowWizardProps {
   instanceId?: string | null;
@@ -62,11 +79,17 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     isLoading: !!instanceId
   }));
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
-
+  
+  // Serialization State
+  const [serializationMode, setSerializationMode] = useState<'GENERATE' | 'SCAN'>('GENERATE');
+  const [scanInput, setScanInput] = useState('');
+  
   const isDesktop = layout === 'desktop';
   const isTablet = layout === 'tablet';
   const isMobile = layout === 'mobile';
   const isTouch = isTablet || isMobile;
+
+  const isSerialized = model.state === 'Serialized' || model.state === 'QCPending' || model.state === 'Released' || model.state === 'Blocked';
 
   // Load existing instance if provided
   useEffect(() => {
@@ -104,12 +127,19 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
   };
 
   const syncModel = (instance: InboundFlowInstance) => {
+    // Map API serializedItems to UI model items
+    const mappedItems: SerialItemState[] = instance.serializedItems?.map(item => ({
+      serial: item.serialNumber,
+      isVerified: true // Committed items are verified by definition in this flow
+    })) || [];
+
     setModel(m => ({
       ...m,
       instanceId: instance.instanceId,
       state: instance.state,
       step: resolveInboundStepFromState(instance.state),
       receipt: instance.receipt,
+      serializedItems: mappedItems.length > 0 ? mappedItems : m.serializedItems,
       isSyncing: false,
       error: null
     }));
@@ -134,45 +164,156 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
         body: JSON.stringify({ receipt: model.receipt })
       });
       const result = await res.json();
-      if (result.ok) syncModel(result.data);
+      if (result.ok) {
+        syncModel(result.data);
+        emitAuditEvent({
+          stageId: 'S3',
+          actionId: 'INBOUND_RECEIPT_CREATED',
+          actorRole: model.role,
+          message: `Receipt created for ${model.receipt.grnNumber} against PO ${model.receipt.poNumber}`
+        });
+      }
       else handleApiError(result.error);
     } catch (e) {
       handleApiError(e);
     }
   };
 
-  const handleSerialize = async () => {
+  const handleModeToggle = (mode: 'GENERATE' | 'SCAN') => {
+      // Clear local uncommitted items when switching modes if not yet serialized
+      if (!isSerialized) {
+          setModel(m => ({ ...m, serializedItems: [] }));
+          setSerializationMode(mode);
+          setScanInput('');
+      }
+  };
+
+  // Only used in SCAN mode now
+  const handleScanVerification = (input: string) => {
+    if (!input.trim()) return;
+    if (serializationMode !== 'SCAN') return;
+
+    // Duplicate Check
+    const isDuplicate = model.serializedItems.some(i => i.serial === input);
+    if (isDuplicate) {
+        setModel(m => ({ ...m, error: `Serial ${input} already scanned.` }));
+        setScanInput('');
+        return;
+    }
+
+    // Limit Check
+    if (model.serializedItems.length >= model.receipt.quantityReceived) {
+        setModel(m => ({ ...m, error: `Quantity limit reached (${model.receipt.quantityReceived}). Cannot scan more.` }));
+        setScanInput('');
+        return;
+    }
+    
+    // Add Item
+    const newItem: SerialItemState = { serial: input, isVerified: true };
+    setModel(m => ({ 
+        ...m, 
+        serializedItems: [...m.serializedItems, newItem], 
+        error: null 
+    }));
+    
+    emitAuditEvent({
+        stageId: 'S3',
+        actionId: 'SCAN_CAPTURED',
+        actorRole: model.role,
+        message: `Captured manufacturer serial: ${input}`
+    });
+    
+    setScanInput('');
+  };
+
+  const handleCommitSerialization = async () => {
     if (!model.instanceId || model.isSyncing) return;
+    
+    // Internal Generation Mode: Generate list if empty
+    let serialsToSend: string[] = [];
+
+    if (serializationMode === 'GENERATE') {
+        if (model.serializedItems.length === 0) {
+             // Deterministic Generation Logic
+            const prefix = model.receipt.materialCode.split('-')[0] || 'MAT';
+            const grnSuffix = model.receipt.grnNumber.split('-').pop() || '000';
+            const year = new Date().getFullYear();
+            
+            serialsToSend = Array.from({ length: model.receipt.quantityReceived }).map((_, i) => 
+                `${prefix}-${year}-${grnSuffix}-${String(i + 1).padStart(3, '0')}`
+            );
+        } else {
+            // Already generated but retrying commit? Should not happen often if UI guards work
+            serialsToSend = model.serializedItems.map(i => i.serial);
+        }
+    } else {
+        // SCAN Mode: Use scanned items
+        // Validation: Must match quantity
+        if (model.serializedItems.length !== model.receipt.quantityReceived) {
+            setModel(m => ({ ...m, error: `Scan count mismatch. Scanned: ${model.serializedItems.length}, Expected: ${model.receipt.quantityReceived}` }));
+            return;
+        }
+        serialsToSend = model.serializedItems.map(i => i.serial);
+    }
+
     setModel(m => ({ ...m, isSyncing: true, error: null }));
 
     try {
-      // Mock serial generation logic
-      const prefix = model.receipt.materialCode.split('-')[0] || 'MAT';
-      const serials = Array.from({ length: model.receipt.quantityReceived }).map((_, i) => 
-        `${prefix}-2026-${Math.random().toString(16).slice(2, 6).toUpperCase()}-${i}`
-      );
-
       const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.serialize, {
         method: 'POST',
-        body: JSON.stringify({ instanceId: model.instanceId, serials })
+        body: JSON.stringify({ instanceId: model.instanceId, serials: serialsToSend })
       });
       const result = await res.json();
       
       if (result.ok) {
-        // Auto-submit for QC in pilot for UX speed
-        const submitRes = await apiFetch(INBOUND_FLOW_ENDPOINTS.submitQc, {
-            method: 'POST',
-            body: JSON.stringify({ instanceId: model.instanceId })
+        emitAuditEvent({
+            stageId: 'S3',
+            actionId: serializationMode === 'GENERATE' ? 'SERIAL_INTERNAL_GENERATED' : 'SERIAL_VERIFIED',
+            actorRole: model.role,
+            message: `Committed ${serialsToSend.length} serials via ${serializationMode} mode`
         });
-        const submitResult = await submitRes.json();
-        if (submitResult.ok) syncModel(submitResult.data);
-        else handleApiError(submitResult.error);
+        syncModel(result.data);
       } else {
         handleApiError(result.error);
       }
     } catch (e) {
       handleApiError(e);
     }
+  };
+
+  const handleProceedToQc = async () => {
+    if (!model.instanceId || model.isSyncing) return;
+    setModel(m => ({ ...m, isSyncing: true, error: null }));
+
+    try {
+      const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.submitQc, {
+          method: 'POST',
+          body: JSON.stringify({ instanceId: model.instanceId })
+      });
+      const result = await res.json();
+      if (result.ok) {
+        syncModel(result.data);
+        emitAuditEvent({
+          stageId: 'S3',
+          actionId: 'INBOUND_QC_STARTED',
+          actorRole: model.role,
+          message: `Batch ${model.receipt.grnNumber} moved to QC Pending state`
+        });
+      }
+      else handleApiError(result.error);
+    } catch (e) {
+      handleApiError(e);
+    }
+  };
+
+  const handleCaptureEvidence = () => {
+      emitAuditEvent({
+          stageId: 'S3',
+          actionId: 'INBOUND_QC_STARTED',
+          actorRole: model.role,
+          message: 'QC Evidence Captured (Mock)'
+      });
+      alert("Simulated: Evidence (Photo/Data) Captured");
   };
 
   const handleCompleteQc = async (decision: "PASS" | "FAIL" | "SCRAP") => {
@@ -186,11 +327,28 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
           instanceId: model.instanceId, 
           decision, 
           qcUser: model.role,
-          remarks: "Simulated pilot inspection results" 
+          remarks: "Simulated pilot inspection results",
+          quantities: {
+            pass: model.passCount,
+            fail: model.receipt.quantityReceived - model.passCount
+          }
         })
       });
       const result = await res.json();
-      if (result.ok) syncModel(result.data);
+      if (result.ok) {
+          syncModel(result.data);
+          const evtMap = {
+              'PASS': 'INBOUND_QC_PASSED',
+              'FAIL': 'INBOUND_QC_FAILED',
+              'SCRAP': 'INVENTORY_SCRAPPED'
+          };
+          emitAuditEvent({
+            stageId: 'S3',
+            actionId: evtMap[decision] || 'INBOUND_QC_FAILED',
+            actorRole: model.role,
+            message: `QC Decision: ${decision}`
+          });
+      }
       else handleApiError(result.error);
     } catch (e) {
       handleApiError(e);
@@ -202,6 +360,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       ...createDefaultInboundWizardModel(),
       isLoading: false
     });
+    setScanInput('');
   };
 
   // UI Components
@@ -232,8 +391,10 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
 
   const ReceiptSummary = () => {
     const summaryItems = [
+      { label: 'PO Reference', value: model.receipt.poNumber || 'N/A', mono: true },
       { label: 'GRN Number', value: model.receipt.grnNumber, mono: true },
       { label: 'Supplier', value: model.receipt.supplierName },
+      { label: 'Supplier Lot', value: model.receipt.supplierLotNumber || 'N/A', mono: true },
       { label: 'Material', value: model.receipt.materialCode },
       { label: 'Quantity', value: `${model.receipt.quantityReceived} ${model.receipt.uom}`, highlight: true },
     ];
@@ -275,7 +436,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     }
 
     return (
-      <div className="bg-slate-50 p-4 rounded border border-slate-200 shadow-inner grid grid-cols-4 gap-4 text-sm">
+      <div className="bg-slate-50 p-4 rounded border border-slate-200 shadow-inner grid grid-cols-3 gap-4 text-sm">
         {summaryItems.map((item, idx) => (
           <div key={idx}>
             <label className="text-[9px] uppercase font-bold text-slate-400">{item.label}</label>
@@ -327,9 +488,25 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
               {model.step === "RECEIPT" && (
                 <FlowStep 
                   stepTitle="Record Material Receipt" 
-                  stepHint="Log physical arrival of material and GRN details."
+                  stepHint="Log physical arrival of material against a valid Purchase Order."
                 >
                   <div className={`grid ${isDesktop ? 'grid-cols-2' : 'grid-cols-1'} gap-6`}>
+                    
+                    {/* PO Selection / Input */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-600 uppercase">Purchase Order (PO)</label>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          className={`w-full border border-slate-300 rounded p-2 pl-8 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
+                          placeholder="PO-2026-XXXX"
+                          value={model.receipt.poNumber}
+                          onChange={e => handleUpdateReceipt('poNumber', e.target.value)}
+                        />
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <label className="block text-xs font-bold text-slate-600 uppercase">GRN Number</label>
                       <input 
@@ -340,6 +517,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                         onChange={e => handleUpdateReceipt('grnNumber', e.target.value)}
                       />
                     </div>
+
                     <div className="space-y-2">
                       <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Name</label>
                       <input 
@@ -350,6 +528,19 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                         onChange={e => handleUpdateReceipt('supplierName', e.target.value)}
                       />
                     </div>
+
+                    {/* Supplier Lot Tracking */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Lot / Batch</label>
+                      <input 
+                        type="text" 
+                        className={`w-full border border-slate-300 rounded p-2 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
+                        placeholder="e.g. LOT-X992-B2"
+                        value={model.receipt.supplierLotNumber || ''}
+                        onChange={e => handleUpdateReceipt('supplierLotNumber', e.target.value)}
+                      />
+                    </div>
+
                     <div className="space-y-2">
                       <label className="block text-xs font-bold text-slate-600 uppercase">Material Code</label>
                       <select 
@@ -364,6 +555,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                         <option value="ENC-ALU-SMALL">ENC-ALU-SMALL</option>
                       </select>
                     </div>
+
                     <div className="space-y-2">
                       <label className="block text-xs font-bold text-slate-600 uppercase">Quantity Received</label>
                       <div className="flex gap-2">
@@ -391,29 +583,162 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
               {model.step === "SERIALIZATION" && (
                 <FlowStep 
                   stepTitle="Component Serialization" 
-                  stepHint="Generate unique identity tags for the received lot."
+                  stepHint="Generate or Verify unique identity tags for the received lot."
                 >
                   <ReceiptSummary />
-                  <div className={`mt-8 p-6 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center ${isTouch ? 'py-10' : ''}`}>
-                    <Barcode size={isTouch ? 64 : 48} className="mx-auto text-slate-300 mb-4" />
-                    <h4 className={`${isTouch ? 'text-lg' : 'text-sm'} font-bold text-slate-700`}>Generate {model.receipt.quantityReceived} Serials</h4>
-                    <p className="text-xs text-slate-500 mt-1">Tags will be prefixed with {model.receipt.materialCode.split('-')[0] || 'MAT'}-2026</p>
-                    
-                    <div className={`mt-6 flex justify-center gap-6 ${isTouch ? 'scale-125 my-8' : ''}`}>
-                      <div className="flex flex-col items-center">
-                        <div className="w-12 h-12 bg-white rounded border border-slate-200 flex items-center justify-center font-mono font-bold text-brand-600">
-                          ID
-                        </div>
-                        <span className="text-[10px] uppercase font-bold text-slate-400 mt-1">Unique</span>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <div className="w-12 h-12 bg-white rounded border border-slate-200 flex items-center justify-center font-mono font-bold text-brand-600">
-                          QR
-                        </div>
-                        <span className="text-[10px] uppercase font-bold text-slate-400 mt-1">Printable</span>
-                      </div>
-                    </div>
+                  
+                  {/* Explicit Mode Toggle - ONLY if not yet serialized */}
+                  <div className="flex justify-center my-6">
+                     <div className={`bg-slate-100 p-1 rounded-lg flex shadow-inner ${isSerialized ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <button
+                           onClick={() => handleModeToggle('GENERATE')}
+                           className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${serializationMode === 'GENERATE' ? 'bg-white shadow text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                           Internal Generation
+                        </button>
+                        <button
+                           onClick={() => handleModeToggle('SCAN')}
+                           className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${serializationMode === 'SCAN' ? 'bg-white shadow text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                           Scan Verification
+                        </button>
+                     </div>
                   </div>
+
+                  {/* Method 1: Internal Generation */}
+                  {serializationMode === 'GENERATE' && (
+                      <div className={`p-6 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center ${isTouch ? 'py-10' : ''} ${isSerialized ? 'bg-green-50 border-green-200' : ''}`}>
+                        
+                        <div className="flex flex-col items-center gap-4">
+                            <Barcode size={isTouch ? 64 : 48} className={`mx-auto ${isSerialized ? 'text-green-500' : 'text-slate-300'}`} />
+                            
+                            {isSerialized ? (
+                                <div>
+                                    <h4 className="text-lg font-bold text-green-700">Serialization Completed</h4>
+                                    <p className="text-xs text-green-600 mt-1">{model.serializedItems.length} IDs generated and verified.</p>
+                                    <div className="mt-4 flex items-center justify-center gap-2 text-xs font-bold text-green-800 bg-green-100 px-3 py-1.5 rounded-full w-fit mx-auto">
+                                        <CheckCircle2 size={14} /> Ready for QC Inspection
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <h4 className={`${isTouch ? 'text-lg' : 'text-sm'} font-bold text-slate-700`}>Generate {model.receipt.quantityReceived} Serials</h4>
+                                    <p className="text-xs text-slate-500 mt-1">Tags will be prefixed with {model.receipt.materialCode.split('-')[0] || 'MAT'}-2026</p>
+                                    
+                                    <div className={`mt-6 flex justify-center gap-6 ${isTouch ? 'scale-125 my-8' : ''}`}>
+                                        <button 
+                                            onClick={handleCommitSerialization}
+                                            disabled={model.isSyncing}
+                                            className="px-6 py-3 bg-brand-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-brand-700 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            <Wand2 size={16} /> Generate Serials
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                      </div>
+                  )}
+
+                  {/* Method 2: Scan Verification */}
+                  {serializationMode === 'SCAN' && (
+                      <div className="p-6 bg-slate-50 border border-slate-200 rounded-lg">
+                         <div className="flex flex-col items-center gap-4">
+                            <h4 className="text-sm font-bold text-slate-700">Scan Manufacturer Serials</h4>
+                            
+                            {!isSerialized && (
+                                <div className="w-full max-w-md relative">
+                                   <input 
+                                      type="text" 
+                                      placeholder="Focus here to scan..." 
+                                      className="w-full border border-slate-300 rounded p-3 pl-10 text-sm focus:ring-2 focus:ring-brand-500 outline-none font-mono"
+                                      value={scanInput}
+                                      onChange={(e) => setScanInput(e.target.value)}
+                                      onKeyDown={(e) => {
+                                          if (e.key === 'Enter') handleScanVerification(scanInput);
+                                      }}
+                                      autoFocus
+                                   />
+                                   <ScanLine size={18} className="absolute left-3 top-3.5 text-slate-400" />
+                                </div>
+                            )}
+                            
+                            <div className="flex items-center gap-4 w-full max-w-md">
+                                <div className="flex-1 bg-white p-3 rounded border border-slate-200 text-center">
+                                   <div className="text-xs text-slate-500 uppercase font-bold">Scanned</div>
+                                   <div className="text-xl font-mono font-bold text-slate-800">{model.serializedItems.length}</div>
+                                </div>
+                                <div className="flex-1 bg-white p-3 rounded border border-slate-200 text-center">
+                                   <div className="text-xs text-slate-500 uppercase font-bold">Target</div>
+                                   <div className="text-xl font-mono font-bold text-slate-400">/ {model.receipt.quantityReceived}</div>
+                                </div>
+                            </div>
+
+                            {!isSerialized && (
+                                <button 
+                                    onClick={() => handleScanVerification(scanInput || `MFR-${Date.now().toString().slice(-6)}`)}
+                                    className="px-4 py-2 bg-blue-100 text-blue-700 rounded text-xs font-bold hover:bg-blue-200 transition-colors disabled:opacity-50"
+                                >
+                                    Simulate Hardware Trigger
+                                </button>
+                            )}
+                            
+                            {!isSerialized && model.serializedItems.length >= model.receipt.quantityReceived && (
+                                <button 
+                                    onClick={handleCommitSerialization}
+                                    className="w-full max-w-md mt-4 px-6 py-3 bg-green-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-green-700 transition-all"
+                                >
+                                    Complete Verification
+                                </button>
+                            )}
+
+                            {isSerialized && (
+                                <div className="mt-2 text-green-600 font-bold text-sm flex items-center gap-2">
+                                    <CheckCircle2 size={16} /> Verification Complete
+                                </div>
+                            )}
+                         </div>
+                      </div>
+                  )}
+
+                  {/* Serial Items List - Display for both modes if items exist */}
+                  {model.serializedItems.length > 0 && (
+                      <div className="mt-6 border border-slate-200 rounded-lg overflow-hidden">
+                          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
+                              <span className="text-xs font-bold text-slate-500 uppercase">Serial Registry ({model.serializedItems.length})</span>
+                              <span className="text-[10px] text-slate-400">
+                                Verified: {model.serializedItems.filter(i => i.isVerified).length}
+                              </span>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto bg-white p-0">
+                              <table className="w-full text-left text-xs">
+                                  <thead className="bg-slate-50 text-slate-500 sticky top-0">
+                                      <tr>
+                                          <th className="px-4 py-2 font-medium">Serial Number</th>
+                                          <th className="px-4 py-2 font-medium text-right">Status</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                      {model.serializedItems.map((item, idx) => (
+                                          <tr key={idx} className={item.isVerified ? 'bg-green-50/30' : ''}>
+                                              <td className="px-4 py-2 font-mono text-slate-700">{item.serial}</td>
+                                              <td className="px-4 py-2 text-right">
+                                                  {item.isVerified ? (
+                                                      <span className="text-green-600 font-bold flex items-center justify-end gap-1">
+                                                          <CheckCircle2 size={10} /> {serializationMode === 'GENERATE' ? 'Generated' : 'Verified'}
+                                                      </span>
+                                                  ) : (
+                                                      <span className="text-amber-500 font-medium">Pending Scan</span>
+                                                  )}
+                                              </td>
+                                          </tr>
+                                      ))}
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
+                  )}
+
                   {model.role !== 'Stores' && (
                     <div className="p-3 bg-amber-50 border border-amber-200 rounded text-slate-600 text-xs mt-4 flex gap-2">
                       <Info size={14} className="text-amber-500 shrink-0" />
@@ -463,12 +788,22 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                     </div>
                   </div>
 
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded flex gap-3 mt-8">
-                    <ClipboardCheck className="text-blue-600 shrink-0" size={isTouch ? 24 : 20} />
-                    <div>
-                       <h4 className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-blue-900`}>Standard QC Check: AIS-156</h4>
-                       <p className="text-xs text-blue-700 mt-0.5">Visual damage, dimension check, and OCV sampling required.</p>
-                    </div>
+                  <div className="flex justify-between items-center mt-8">
+                      <div className="p-3 bg-blue-50 border border-blue-200 rounded flex gap-3 flex-1 mr-4">
+                        <ClipboardCheck className="text-blue-600 shrink-0" size={isTouch ? 24 : 20} />
+                        <div>
+                           <h4 className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-blue-900`}>Standard QC Check: AIS-156</h4>
+                           <p className="text-xs text-blue-700 mt-0.5">Visual damage, dimension check, and OCV sampling required.</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={handleCaptureEvidence}
+                        className="flex flex-col items-center text-slate-400 hover:text-brand-600 transition-colors"
+                        title="Capture Evidence"
+                      >
+                          <div className="p-2 border rounded bg-white hover:border-brand-300"><Camera size={20} /></div>
+                          <span className="text-[9px] font-bold mt-1 uppercase">Evidence</span>
+                      </button>
                   </div>
                   
                   {model.role !== 'QA' && (
@@ -546,8 +881,8 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                 <>
                   <button onClick={() => setModel(m => ({ ...m, step: "RECEIPT" }))} className={`px-4 py-2 text-sm font-bold text-slate-500 ${isMobile ? 'w-full' : ''}`}>Back</button>
                   <button 
-                    onClick={handleSerialize}
-                    disabled={model.role !== 'Stores' || model.isSyncing}
+                    onClick={handleProceedToQc}
+                    disabled={model.role !== 'Stores' || !isSerialized || model.isSyncing}
                     className={`flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-white rounded font-bold text-sm hover:bg-brand-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
                   >
                     Next: QA Inspection <ChevronRight size={16} />

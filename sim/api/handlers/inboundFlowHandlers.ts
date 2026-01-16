@@ -1,3 +1,4 @@
+
 /**
  * Inbound Flow API Handlers
  * Simulated backend logic for FLOW-003.
@@ -100,7 +101,7 @@ export const submitInboundQc: ApiHandler = async (req) => {
  * POST /api/flows/inbound/complete-qc
  */
 export const completeInboundQc: ApiHandler = async (req) => {
-  const { instanceId, decision, remarks, qcUser } = parseBody<CompleteQcReq>(req);
+  const { instanceId, decision, remarks, qcUser, quantities } = parseBody<CompleteQcReq>(req);
   const flow = getFlow(instanceId) as InboundFlowInstance | undefined;
 
   if (!flow || flow.flowId !== "FLOW-003") return err("NOT_FOUND", "Flow not found", 404);
@@ -111,11 +112,25 @@ export const completeInboundQc: ApiHandler = async (req) => {
   flow.qcAt = nowIso();
   flow.qcRemarks = remarks;
   
-  // Update serial items based on simple logic (all pass if decision is PASS)
-  flow.serializedItems = flow.serializedItems.map(item => ({
-    ...item,
-    status: decision === "PASS" ? "PASSED" : "FAILED"
-  }));
+  // Update serial items based on explicit pass/fail counts if provided
+  if (quantities) {
+      const passLimit = quantities.pass;
+      flow.serializedItems = flow.serializedItems.map((item, index) => {
+          // If we have passed items remaining, mark as passed
+          // We just take the first N items as Passed for the simulation
+          if (index < passLimit) {
+              return { ...item, status: "PASSED" };
+          }
+          // The rest are Failed/Blocked
+          return { ...item, status: "BLOCKED" };
+      });
+  } else {
+      // Fallback if no quantities provided (e.g. legacy call or full block)
+      flow.serializedItems = flow.serializedItems.map(item => ({
+        ...item,
+        status: decision === "PASS" ? "PASSED" : "BLOCKED"
+      }));
+  }
 
   flow.updatedAt = nowIso();
 

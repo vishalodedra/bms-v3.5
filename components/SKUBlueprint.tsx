@@ -34,7 +34,13 @@ import {
   Eye,
   FileText,
   ShieldCheck,
-  Save
+  Save,
+  Power,
+  RotateCcw,
+  Ban,
+  Copy,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { StageStateBanner } from './StageStateBanner';
 import { PreconditionsPanel } from './PreconditionsPanel';
@@ -45,9 +51,11 @@ import { emitAuditEvent, getAuditEvents, AuditEvent } from '../utils/auditEvents
 import { SkuFlowWizard } from '../flows/sku/ui/SkuFlowWizard';
 import { apiFetch } from '../services/apiHarness';
 import { SKU_FLOW_ENDPOINTS, type SkuFlowInstance } from '../flows/sku';
+import { Modal } from './Modal';
 
 // --- Domain Types ---
 type BlueprintType = 'SKU' | 'CELL' | 'IOT';
+type BlueprintStatus = 'DRAFT' | 'ACTIVE' | 'DEACTIVE';
 
 interface Blueprint {
   id: string;
@@ -58,7 +66,7 @@ interface Blueprint {
   formFactor?: 'Prismatic' | 'Cylindrical 21700' | 'Pouch';
   voltage?: string;
   capacity?: string;
-  status: 'Draft' | 'Approved' | 'Obsolete' | 'Review';
+  status: BlueprintStatus;
   lastUpdated: string;
   compliance: {
     batteryAadhaar: boolean;
@@ -78,7 +86,7 @@ const MOCK_BLUEPRINTS: Blueprint[] = [
     formFactor: 'Cylindrical 21700',
     voltage: '48V',
     capacity: '2.5 kWh',
-    status: 'Approved',
+    status: 'ACTIVE',
     lastUpdated: '2026-01-10 14:00',
     compliance: { batteryAadhaar: true, euPassport: false, bisCertified: true }
   },
@@ -91,7 +99,7 @@ const MOCK_BLUEPRINTS: Blueprint[] = [
     formFactor: 'Prismatic',
     voltage: '800V',
     capacity: '75 kWh',
-    status: 'Draft',
+    status: 'DRAFT',
     lastUpdated: '2026-01-12 09:30',
     compliance: { batteryAadhaar: true, euPassport: true, bisCertified: false }
   },
@@ -102,7 +110,7 @@ const MOCK_BLUEPRINTS: Blueprint[] = [
     type: 'CELL',
     chemistry: 'LFP',
     formFactor: 'Cylindrical 21700',
-    status: 'Approved',
+    status: 'ACTIVE',
     lastUpdated: '2025-12-15 11:20',
     compliance: { batteryAadhaar: false, euPassport: false, bisCertified: true }
   },
@@ -111,7 +119,7 @@ const MOCK_BLUEPRINTS: Blueprint[] = [
     code: 'IOT-BMS-GW-V2',
     name: 'BMS IoT Gateway Module',
     type: 'IOT',
-    status: 'Review',
+    status: 'DEACTIVE',
     lastUpdated: '2026-01-14 16:45',
     compliance: { batteryAadhaar: false, euPassport: false, bisCertified: true }
   }
@@ -136,9 +144,30 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
   
   // Data State
   const [blueprints, setBlueprints] = useState<Blueprint[]>(MOCK_BLUEPRINTS);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<BlueprintStatus | 'ALL'>('ALL'); // New Filter State
   const [s1Context, setS1Context] = useState<S1Context>(getMockS1Context());
   const [localEvents, setLocalEvents] = useState<AuditEvent[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Confirmation State
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    bpId: string | null;
+    bpCode: string;
+    newStatus: BlueprintStatus | null;
+    currentStatus: BlueprintStatus | null;
+  }>({
+    isOpen: false,
+    bpId: null,
+    bpCode: '',
+    newStatus: null,
+    currentStatus: null
+  });
 
   // Resume capability for SkuFlow
   const [resumeInstanceId, setResumeInstanceId] = useState<string | null>(null);
@@ -146,6 +175,45 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
   useEffect(() => {
     setLocalEvents(getAuditEvents().filter(e => e.stageId === 'S1'));
   }, []);
+
+  // Filtered List Logic
+  const filteredBlueprints = useMemo(() => {
+    let filtered = blueprints;
+
+    // 1. Status Filter
+    if (statusFilter !== 'ALL') {
+      filtered = filtered.filter(bp => bp.status === statusFilter);
+    }
+
+    // 2. Search Filter
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      filtered = filtered.filter(bp => 
+        bp.name.toLowerCase().includes(lowerQuery) || 
+        bp.code.toLowerCase().includes(lowerQuery) ||
+        bp.type.toLowerCase().includes(lowerQuery)
+      );
+    }
+    
+    return filtered;
+  }, [blueprints, searchQuery, statusFilter]);
+
+  // Pagination Logic
+  useEffect(() => {
+    setCurrentPage(1); // Reset to first page on search or filter change
+  }, [searchQuery, statusFilter]);
+
+  const totalPages = Math.ceil(filteredBlueprints.length / itemsPerPage);
+  const paginatedBlueprints = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredBlueprints.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredBlueprints, currentPage, itemsPerPage]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
+  };
 
   // Helper to resolve action state
   const getAction = (actionId: S1ActionId) => getS1ActionState(role, s1Context, actionId);
@@ -167,6 +235,7 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
 
   const handleAddNewBlueprint = (bp: Blueprint) => {
     setBlueprints(prev => [bp, ...prev]);
+    setCurrentPage(1); // Ensure visibility
     // Emit event
     const evt = emitAuditEvent({
       stageId: 'S1',
@@ -178,12 +247,121 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
     goToList();
   };
 
+  // 1. Request Change (Opens Modal)
+  const handleStatusChangeRequest = (id: string, code: string, currentStatus: BlueprintStatus, newStatus: BlueprintStatus) => {
+    setConfirmState({
+      isOpen: true,
+      bpId: id,
+      bpCode: code,
+      currentStatus,
+      newStatus
+    });
+  };
+
+  // 2. Execute Change (Confirmed)
+  const confirmStatusChange = () => {
+    if (!confirmState.bpId || !confirmState.newStatus) return;
+
+    const { bpId, newStatus, currentStatus, bpCode } = confirmState;
+
+    setBlueprints(prev => prev.map(bp => {
+        if (bp.id === bpId) {
+            // Audit Event (Emitted only on confirmation)
+            const evt = emitAuditEvent({
+                stageId: 'S1',
+                actionId: 'EDIT_BLUEPRINT',
+                actorRole: role,
+                message: `Status changed for ${bp.code}: ${currentStatus} -> ${newStatus}`
+            });
+            setLocalEvents(prevEvents => [evt, ...prevEvents]);
+            return { ...bp, status: newStatus, lastUpdated: new Date().toLocaleString() };
+        }
+        return bp;
+    }));
+
+    // Close Modal
+    setConfirmState({ ...confirmState, isOpen: false });
+  };
+
+  // Sequential Code Generation Logic
+  const generateNextCode = (baseCode: string, allCodes: string[]): string => {
+    let nextCode = '';
+    
+    // Check if code ends with numbers
+    const match = baseCode.match(/(.*?)(\d+)$/);
+    
+    if (match) {
+      // Has numeric suffix: Increment it
+      const prefix = match[1];
+      const numberPart = match[2];
+      const nextNum = parseInt(numberPart, 10) + 1;
+      nextCode = `${prefix}${nextNum.toString().padStart(numberPart.length, '0')}`;
+    } else {
+      // No numeric suffix: Append -001
+      nextCode = `${baseCode}-001`;
+    }
+
+    // Recursively handle collisions (in case the incremented one also exists)
+    while (allCodes.includes(nextCode)) {
+      const subMatch = nextCode.match(/(.*?)(\d+)$/);
+      if (subMatch) {
+        const p = subMatch[1];
+        const n = subMatch[2];
+        const nextN = parseInt(n, 10) + 1;
+        nextCode = `${p}${nextN.toString().padStart(n.length, '0')}`;
+      } else {
+        // Fallback safety (should rarely reach here if logic holds)
+        nextCode = `${nextCode}-001`;
+      }
+    }
+
+    return nextCode;
+  };
+
+  const handleClone = (id: string) => {
+    const sourceBp = blueprints.find(bp => bp.id === id);
+    if (!sourceBp) return;
+
+    // Get all existing codes to ensure uniqueness
+    const allCodes = blueprints.map(b => b.code);
+    
+    // Generate new code sequentially
+    const newCode = generateNextCode(sourceBp.code, allCodes);
+
+    const newBp: Blueprint = {
+      ...sourceBp,
+      id: `${sourceBp.type.toLowerCase()}-${Date.now()}`,
+      code: newCode,
+      name: sourceBp.name, // Keep exact name per requirements
+      status: 'DRAFT', // Force DRAFT status
+      lastUpdated: new Date().toLocaleString(),
+      // Keep compliance flags
+    };
+
+    setBlueprints(prev => [newBp, ...prev]);
+    setCurrentPage(1); // Jump to first page to see the new clone
+
+    // Emit audit event
+    const evt = emitAuditEvent({
+      stageId: 'S1',
+      actionId: 'CREATE_SKU', // Reusing create permission logic
+      actorRole: role,
+      message: `Cloned blueprint ${sourceBp.code} to ${newBp.code}`
+    });
+    setLocalEvents(prev => [evt, ...prev]);
+  };
+
   // --- Sub-Components ---
 
   // 1. Read-Only Detail View
   const BlueprintDetailView: React.FC<{ id: string }> = ({ id }) => {
     const bp = blueprints.find(b => b.id === id);
     if (!bp) return <div className="p-8 text-center text-slate-500">Blueprint not found.</div>;
+
+    const canModifyStatus = (role === UserRole.SYSTEM_ADMIN || role === UserRole.MANAGEMENT || role === UserRole.ENGINEERING);
+    const isDraft = bp.status === 'DRAFT';
+    const isActive = bp.status === 'ACTIVE';
+    const isDeactive = bp.status === 'DEACTIVE';
 
     return (
       <div className="bg-white rounded-lg shadow-sm border border-industrial-border flex flex-col h-full overflow-hidden animate-in slide-in-from-right-4">
@@ -204,12 +382,37 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
           </div>
           <div className="flex flex-col items-end gap-2">
              <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
-                bp.status === 'Approved' ? 'bg-green-100 text-green-700 border-green-200' :
-                bp.status === 'Draft' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-                'bg-amber-50 text-amber-700 border-amber-200'
+                isActive ? 'bg-green-100 text-green-700 border-green-200' :
+                isDraft ? 'bg-slate-100 text-slate-600 border-slate-200' :
+                'bg-red-50 text-red-700 border-red-200'
              }`}>
                {bp.status}
              </div>
+             
+             {/* Status Actions with Confirmation */}
+             {canModifyStatus && (
+               <div className="flex items-center gap-2">
+                 {isDraft && (
+                    <button
+                        onClick={() => handleStatusChangeRequest(bp.id, bp.code, bp.status, 'ACTIVE')}
+                        className="text-xs bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition-colors font-bold flex items-center gap-1 shadow-sm"
+                    >
+                        <Power size={12} /> Activate
+                    </button>
+                 )}
+                 {isActive && (
+                    <button
+                        onClick={() => handleStatusChangeRequest(bp.id, bp.code, bp.status, 'DEACTIVE')}
+                        className="text-xs bg-white text-red-600 border border-red-200 px-3 py-1.5 rounded hover:bg-red-50 transition-colors font-bold flex items-center gap-1 shadow-sm"
+                    >
+                        <Ban size={12} /> Deactivate
+                    </button>
+                 )}
+                 {isDeactive && (
+                    <span className="text-[10px] text-slate-400 italic">Archived Record</span>
+                 )}
+               </div>
+             )}
           </div>
         </div>
 
@@ -296,7 +499,7 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
         chemistry: form.chemistry as any,
         capacity: form.capacity,
         voltage: form.voltage,
-        status: 'Draft',
+        status: 'DRAFT', // Explicitly DRAFT per requirements
         lastUpdated: new Date().toLocaleString(),
         compliance: { batteryAadhaar: false, euPassport: false, bisCertified: false }
       };
@@ -372,7 +575,7 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
         code: form.code,
         name: form.name,
         type: 'IOT',
-        status: 'Draft',
+        status: 'DRAFT', // Explicitly DRAFT
         lastUpdated: new Date().toLocaleString(),
         compliance: { batteryAadhaar: false, euPassport: false, bisCertified: false }
       };
@@ -492,6 +695,51 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
 
   return (
     <div className={`space-y-6 ${isListView ? '' : 'h-full flex flex-col'} animate-in fade-in duration-300 pb-4`}>
+      
+      {/* Confirmation Modal */}
+      <Modal
+        isOpen={confirmState.isOpen}
+        onClose={() => setConfirmState({ ...confirmState, isOpen: false })}
+        title="Confirm Status Change"
+        footer={
+          <>
+            <button 
+              onClick={() => setConfirmState({ ...confirmState, isOpen: false })}
+              className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md"
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={confirmStatusChange}
+              className={`px-4 py-2 text-sm font-bold text-white rounded-md shadow-sm ${
+                confirmState.newStatus === 'ACTIVE' ? 'bg-green-600 hover:bg-green-700' :
+                'bg-red-600 hover:bg-red-700'
+              }`}
+            >
+              Confirm {confirmState.newStatus === 'ACTIVE' ? 'Activation' : 'Deactivation'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className={`p-3 rounded-md border flex items-start gap-3 ${
+             confirmState.newStatus === 'ACTIVE' ? 'bg-green-50 border-green-200 text-green-800' :
+             'bg-red-50 border-red-200 text-red-800'
+          }`}>
+             {confirmState.newStatus === 'ACTIVE' ? <CheckCircle2 size={20} className="mt-0.5" /> : <Ban size={20} className="mt-0.5" />}
+             <div>
+               <h4 className="font-bold text-sm">Status Update Required</h4>
+               <p className="text-xs mt-1">
+                 You are about to change the status of blueprint <strong>{confirmState.bpCode}</strong> from <strong>{confirmState.currentStatus}</strong> to <strong>{confirmState.newStatus}</strong>.
+               </p>
+             </div>
+          </div>
+          <p className="text-sm text-slate-600">
+            This action will be logged in the audit trail. Are you sure you want to proceed?
+          </p>
+        </div>
+      </Modal>
+
       {/* Standard Header */}
       <div className="flex items-center justify-between shrink-0 border-b border-slate-200 pb-4">
         <div>
@@ -541,16 +789,34 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
          
          {/* VIEW: LIST */}
          {route.view === 'LIST' && (
-            <div className="bg-white rounded-lg shadow-sm border border-industrial-border animate-in fade-in slide-in-from-bottom-2">
-               <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div className="bg-white rounded-lg shadow-sm border border-industrial-border animate-in fade-in slide-in-from-bottom-2 flex flex-col">
+               <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-center bg-slate-50 shrink-0 gap-4">
                   <div className="flex items-center gap-3">
                      <Grid size={16} className="text-slate-400" />
                      <h3 className="font-bold text-slate-700 text-sm">Blueprint Registry</h3>
-                     <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{blueprints.length}</span>
+                     <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{filteredBlueprints.length}</span>
                   </div>
                   <div className="flex gap-2">
+                     {/* Status Filter */}
+                     <select 
+                       value={statusFilter}
+                       onChange={(e) => setStatusFilter(e.target.value as any)}
+                       className="text-xs border border-slate-300 rounded-md px-2 py-1.5 focus:ring-2 focus:ring-brand-500 outline-none bg-white font-medium text-slate-600"
+                     >
+                       <option value="ALL">All Status</option>
+                       <option value="DRAFT">Draft</option>
+                       <option value="ACTIVE">Active</option>
+                       <option value="DEACTIVE">Deactive</option>
+                     </select>
+
                      <div className="relative">
-                        <input type="text" placeholder="Search..." className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-md focus:ring-2 focus:ring-brand-500 outline-none w-48" />
+                        <input 
+                          type="text" 
+                          placeholder="Search name, code, type..." 
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-md focus:ring-2 focus:ring-brand-500 outline-none w-64" 
+                        />
                         <Search size={12} className="absolute left-2.5 top-2 text-slate-400" />
                      </div>
                      <button className="p-1.5 border border-slate-300 rounded-md text-slate-500 hover:bg-slate-100"><Filter size={14} /></button>
@@ -565,45 +831,89 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
                            <th className="px-6 py-3 uppercase tracking-wider">Type</th>
                            <th className="px-6 py-3 uppercase tracking-wider">Name</th>
                            <th className="px-6 py-3 uppercase tracking-wider">Status</th>
-                           <th className="px-6 py-3 uppercase tracking-wider">Last Updated</th>
+                           {/* Removed Last Updated Column */}
                            <th className="px-6 py-3 uppercase tracking-wider text-right">Actions</th>
                         </tr>
                      </thead>
                      <tbody className="divide-y divide-slate-100">
-                        {blueprints.map(bp => (
-                           <tr key={bp.id} className="hover:bg-slate-50 transition-colors group">
-                              <td className="px-6 py-4 font-mono text-xs font-bold text-slate-700">{bp.code}</td>
-                              <td className="px-6 py-4">
-                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                    bp.type === 'SKU' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                                    bp.type === 'CELL' ? 'bg-purple-50 text-purple-700 border-purple-100' :
-                                    'bg-amber-50 text-amber-700 border-amber-100'
-                                 }`}>{bp.type}</span>
-                              </td>
-                              <td className="px-6 py-4 font-medium text-slate-800">{bp.name}</td>
-                              <td className="px-6 py-4">
-                                 <span className={`flex items-center gap-1.5 text-xs font-medium ${
-                                    bp.status === 'Approved' ? 'text-green-600' : 
-                                    bp.status === 'Draft' ? 'text-slate-500' :
-                                    'text-amber-600'
-                                 }`}>
-                                    {bp.status === 'Approved' && <CheckCircle2 size={12} />}
-                                    {bp.status}
-                                 </span>
-                              </td>
-                              <td className="px-6 py-4 text-slate-500 text-xs">{bp.lastUpdated}</td>
-                              <td className="px-6 py-4 text-right">
-                                 <button 
-                                    onClick={() => goToDetail(bp.id)}
-                                    className="text-brand-600 hover:text-brand-800 text-xs font-bold px-3 py-1.5 rounded hover:bg-brand-50 transition-colors"
-                                 >
-                                    View
-                                 </button>
+                        {paginatedBlueprints.length === 0 ? (
+                           <tr>
+                              <td colSpan={5} className="px-6 py-8 text-center text-slate-400 italic text-sm">
+                                 No blueprints found matching your search.
                               </td>
                            </tr>
-                        ))}
+                        ) : (
+                           paginatedBlueprints.map(bp => (
+                              <tr key={bp.id} className="hover:bg-slate-50 transition-colors group">
+                                 <td className="px-6 py-4 font-mono text-xs font-bold text-slate-700">{bp.code}</td>
+                                 <td className="px-6 py-4">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                       bp.type === 'SKU' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                                       bp.type === 'CELL' ? 'bg-purple-50 text-purple-700 border-purple-100' :
+                                       'bg-amber-50 text-amber-700 border-amber-100'
+                                    }`}>{bp.type}</span>
+                                 </td>
+                                 <td className="px-6 py-4 font-medium text-slate-800">{bp.name}</td>
+                                 <td className="px-6 py-4">
+                                    <span className={`flex items-center gap-1.5 text-xs font-medium ${
+                                       bp.status === 'ACTIVE' ? 'text-green-600' : 
+                                       bp.status === 'DRAFT' ? 'text-slate-500' :
+                                       'text-red-500'
+                                    }`}>
+                                       {bp.status === 'ACTIVE' && <CheckCircle2 size={12} />}
+                                       {bp.status === 'DEACTIVE' && <Ban size={12} />}
+                                       {bp.status}
+                                    </span>
+                                 </td>
+                                 {/* Removed Last Updated Cell */}
+                                 <td className="px-6 py-4 text-right">
+                                    <div className="flex justify-end gap-2">
+                                       <button 
+                                          onClick={() => handleClone(bp.id)}
+                                          className="text-slate-500 hover:text-brand-600 text-xs font-bold px-2 py-1.5 rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
+                                          title="Clone Blueprint"
+                                       >
+                                          <Copy size={12} />
+                                       </button>
+                                       <button 
+                                          onClick={() => goToDetail(bp.id)}
+                                          className="text-brand-600 hover:text-brand-800 text-xs font-bold px-3 py-1.5 rounded hover:bg-brand-50 transition-colors"
+                                       >
+                                          View
+                                       </button>
+                                    </div>
+                                 </td>
+                              </tr>
+                           ))
+                        )}
                      </tbody>
                   </table>
+               </div>
+
+               {/* Pagination Controls */}
+               <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+                  <div className="text-xs text-slate-500">
+                     Showing {Math.min(filteredBlueprints.length, (currentPage - 1) * itemsPerPage + 1)} - {Math.min(filteredBlueprints.length, currentPage * itemsPerPage)} of {filteredBlueprints.length} items
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                     >
+                        <ChevronLeft size={16} className="text-slate-600" />
+                     </button>
+                     <span className="text-xs font-medium text-slate-700">
+                        Page {currentPage} of {Math.max(1, totalPages)}
+                     </span>
+                     <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages || totalPages === 0}
+                        className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                     >
+                        <ChevronRight size={16} className="text-slate-600" />
+                     </button>
+                  </div>
                </div>
             </div>
          )}

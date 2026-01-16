@@ -1,3 +1,4 @@
+
 /**
  * Inbound Flow Contract (FLOW-003)
  * Canonical definitions for Material Receipt, Serialization & QC lifecycle.
@@ -17,8 +18,10 @@ export type InboundFlowState =
 export type InboundFlowRole = "Stores" | "QA" | "Supervisor";
 
 export interface InboundReceiptDraft {
+  poNumber?: string; // Optional for now to support non-PO receipts if needed, but UI will enforce
   grnNumber: string;
   supplierName: string;
+  supplierLotNumber?: string; // Added for traceability
   materialCode: string;
   materialDescription?: string;
   quantityReceived: number;
@@ -29,7 +32,7 @@ export interface InboundReceiptDraft {
 
 export interface SerializedItem {
   serialNumber: string;
-  status: "PENDING_QC" | "PASSED" | "FAILED";
+  status: "PENDING_QC" | "PASSED" | "FAILED" | "BLOCKED";
 }
 
 export interface InboundFlowInstance {
@@ -72,6 +75,7 @@ export type SubmitForQcRes = ApiResult<InboundFlowInstance>;
 export interface CompleteQcReq {
   instanceId: EntityId;
   decision: "PASS" | "FAIL" | "SCRAP";
+  quantities?: { pass: number; fail: number };
   remarks?: string;
   qcUser: string;
 }

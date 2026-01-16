@@ -4,6 +4,31 @@
 
 | Patch ID | Patch Type | Intent | Status | Notes | Date |
 |:---|:---|:---|:---|:---|:---|
+| **V34-S3-GOV-FP-21** | Fix Patch | Fix QC Serial Disposition | **STABLE** | Implemented serial-level QC status mapping (Pass/Block); Corrected View page visibility. | 2026-01-29 04:30 (IST) |
+| **V34-S3-GOV-FP-20** | Fix Patch | Fix S3 Serialization Post-Gen | **STABLE** | Removed invalid scan step after Internal Generation; Added completion locking. | 2026-01-29 03:45 (IST) |
+| **V34-S3-GOV-FP-19** | Fix Patch | S3 Serialization Logic Fix | **STABLE** | Separated Internal Gen vs Scan Verification; Disabled auto-verify; Removed scan requirement for Internal Gen. | 2026-01-29 03:00 (IST) |
+| **V34-S3-GOV-FP-18** | Fix Patch | Fix Serialization UX | **STABLE** | Enforced manual scan-only flow; Moved serial list to bottom; Added serial visibility to Receipt Detail view. | 2026-01-29 02:00 (IST) |
+| **V34-S3-GOV-FP-17** | Fix Patch | Fix Serialization UI | **STABLE** | Implemented visible Serial List and Scan Verification logic in Inbound Wizard. | 2026-01-29 01:00 (IST) |
+| **V34-S3-GOV-FP-16** | Fix Patch | Fix Internal Serial Gen | **STABLE** | Fixed serialization logic to deterministically generate and persist serials; Enforced explicit 'Generate' action before QC. | 2026-01-29 00:15 (IST) |
+| **V34-S3-GOV-FP-15** | Fix Patch | Fix Inbound Next Navigation | **STABLE** | Corrected wizard step resolution for 'Received' state to ensure transition to Serialization. | 2026-01-28 23:45 (IST) |
+| **V34-S3-GOV-FP-14** | Fix Patch | S3 Functional Completeness | **STABLE** | Added PO Number & Supplier Lot capture to Inbound Flow; Enforced strict serialization method selection. | 2026-01-28 23:15 (IST) |
+| **V34-S3-GOV-FP-13** | Fix Patch | Restore S3 Features | **STABLE** | Restored Scan, Serialization Modes, and Label Printing in Inbound Wizard. Preserved routing. | 2026-01-28 22:45 (IST) |
+| **V34-S3-GOV-PP-12** | Product Patch | S3 Full Page & Routing | **STABLE** | Implemented full-page scrolling and route-based navigation for Inbound Console; Removed split-pane constraint. | 2026-01-28 22:00 (IST) |
+| **V34-S3-GOV-PP-11** | Product Patch | S3 Inbound Flow Strictness | **STABLE** | Enforced GRN->Serialization->QC->Disposition flow; Implemented strict inventory state machine and audit events. | 2026-01-28 21:00 (IST) |
+| **V34-S2-GOV-FP-10** | Fix Patch | Fix PO Status Filter | **STABLE** | Added missing 'Rejected' option to Purchase Order registry filter. | 2026-01-28 20:15 (IST) |
+| **V34-S2-GOV-PP-09** | Product Patch | Update S2 Currency to INR | **STABLE** | Standardized Commercial Procurement to use Indian Rupees (₹) with en-IN formatting. | 2026-01-28 20:00 (IST) |
+| **V34-S2-GOV-PP-08** | Product Patch | Fix PO Workflow Blocking | **STABLE** | Removed global lockout for PO creation; Implemented strict item-level state machine; Fixed "PO already in workflow" error. | 2026-01-28 19:30 (IST) |
+| **V34-S2-GOV-PP-07** | Product Patch | S2 PO Management Refactor | **STABLE** | Refactored S2 to focus on Purchase Order Lifecycle; Added PO Listing, Detail, and Create flows with strict state machine. | 2026-01-28 18:30 (IST) |
+| **V34-S2-GOV-PP-06** | Product Patch | S2 Full Page Scrolling | **STABLE** | Enabled full-page vertical scrolling for Commercial Procurement listing; Removed inner scroll containers. | 2026-01-28 18:00 (IST) |
+| **V34-S2-GOV-PP-05** | Product Patch | S2 List/Detail Refactor | **STABLE** | Refactored Procurement to strict List/Detail routing; Moved SKUs/Terms to Supplier Detail view. | 2026-01-28 17:30 (IST) |
+| **V34-S2-GOV-PP-04** | Product Patch | S2 Scroll & List Alignment | **STABLE** | Enabled full-page scrolling for Procurement; Added pagination and status filter to Supplier Master. | 2026-01-28 17:00 (IST) |
+| **V34-S1-GOV-PP-12** | Product Patch | Add Status Confirmation | **STABLE** | Added explicit confirmation modal for Blueprint status transitions (Active/Deactive). | 2026-01-28 16:00 (IST) |
+| **V34-S1-GOV-PP-11** | Product Patch | Fix Table Height & Scrolling | **STABLE** | Removed fixed height constraints from Listing card to enable proper full-page scrolling; Fixed internal overflow issues. | 2026-01-28 15:00 (IST) |
+| **V34-S1-GOV-PP-10** | Product Patch | S1 Status Filter & Sequential Clone | **STABLE** | Added Status Filter to listing; Implemented sequential code increment for Clone action (no name mutation). | 2026-01-28 14:00 (IST) |
+| **V34-S1-GOV-PP-09** | Product Patch | Refine S1 Listing & Clone | **STABLE** | Added pagination to blueprint list; Removed "(Clone)" suffix from cloned record names. | 2026-01-28 13:00 (IST) |
+| **V34-S1-GOV-PP-08** | Product Patch | Add Blueprint Cloning | **STABLE** | Added 'Clone' action to listing; Creates DRAFT copy with unique code suffix. | 2026-01-28 12:00 (IST) |
+| **V34-S1-GOV-PP-07** | Product Patch | Fix Blueprint Listing & Status Flow | **STABLE** | Standardized DRAFT/ACTIVE/DEACTIVE lifecycle; Added list search; Removed Last Updated column. | 2026-01-28 11:30 (IST) |
+| **V34-S1-GOV-PP-06** | Product Patch | Enable Status Management for Blueprints | **STABLE** | Added Active/Inactive status toggle for all blueprint types; wired audit events. | 2026-01-28 10:00 (IST) |
 | **V34-S1-GOV-PP-05** | Product Patch | Add Cell & IoT Blueprint Forms | **STABLE** | Replaced type cards with compact selector; Added specific forms for CELL and IOT types. | 2026-01-28 09:30 (IST) |
 | **V34-S1-GOV-PP-04** | Product Patch | Enable Full Page Scrolling for SKU List | **STABLE** | Removed fixed height constraints on S1 Listing view to allow natural page scrolling. | 2026-01-28 08:30 (IST) |
 | **V34-S1-GOV-PP-03** | Product Patch | Enhance S1 Blueprint Governance | **STABLE** | Refactored S1 to route-based views (List/Detail/Create); Added CELL/IOT types; Implemented type selection flow. | 2026-01-28 08:00 (IST) |
@@ -33,13 +58,6 @@
 | **V34-S2-FLOW-002-PP-03** | Product Patch | Wire Batch Wizard to /api/flows/batch endpoints | **STABLE** | Integrated sim API with in-memory store for Batch lifecycle. | 2026-01-27 20:15 (IST) |
 | **V34-S2-FLOW-002-PP-02** | Product Patch | Add Batch Flow Wizard UI using FlowShell | **STABLE** | Local state only. No API yet. Wizard hidden by default. | 2026-01-27 19:45 (IST) |
 | **V34-S2-FLOW-002-BP-01** | Build-Phase | Define Batch flow states, data model, and API payload contracts | **STABLE** | Contracts only; no UI wiring or handlers. | 2026-01-27 19:15 (IST) |
-| **V34-S1-FLOW-001-DOC-06** | Documentation | Document FLOW-001 (S1 SKU) — states, RBAC, wizard, API endpoints, handover meta | **STABLE** | No runtime change. Completes Flow-001 pilot. | 2026-01-27 18:45 (IST) |
-| **V34-S1-FLOW-001-PP-06** | Product Patch | SKU Flow Instance List & Load | **STABLE** | Integrated sim API flow list into S1 screen; added "Resume" support in Wizard. | 2026-01-27 18:30 (IST) |
-| **V34-S1-FLOW-001-PP-05** | Product Patch | Wire S1 SKU Wizard to /api/flows/sku endpoints backed by in-memory store | **STABLE** | Sim API via apiFetch; no global fetch patching. | 2026-01-27 18:00 (IST) |
-| **V34-S1-FLOW-001-PP-04** | Product Patch | Add device-aware layout for S1 SKU Wizard (desktop/tablet/mobile) | **STABLE** | Uses useDeviceLayout(); still local-only; no API wiring. | 2026-01-27 17:15 (IST) |
-| **V34-S1-FLOW-001-PP-03** | Product Patch | Add S1 SKU Flow Step Wizard UI (local-only; no API) | **STABLE** | Wizard hidden by default; existing S1 UI preserved. No API wiring yet. | 2026-01-27 16:45 (IST) |
-| **V34-S1-FLOW-001-FP-02** | Flow Policy | Add RBAC policy mapping for SKU flow actions by role + state | **STABLE** | Pure policy logic; no UI changes. | 2026-01-27 16:15 (IST) |
-| **V34-S1-FLOW-001-BP-01** | Flow Contract | Define S1 SKU flow state machine + API payload contracts (no UI wiring) | **STABLE** | Phase B begins. Contracts only. | 2026-01-27 15:45 (IST) |
 | **V34-FND-BP-10** | Foundation | Add in-memory API store (flows map) resettable on reload | **STABLE** | PLAN: Phase A Step 6 (V34-FND-BP-06). Store introduced; endpoints still static; no UI wiring. | 2026-01-27 15:15 (IST) |
 | **V34-FND-BP-09** | Foundation | Add /api/flows/* static skeleton endpoints (Option-B alignment) | **STABLE** | PLAN: Phase A Step 5 (V34-FND-BP-05). Static JSON only; no UI wiring. | 2026-01-27 14:45 (IST) |
 | **V34-FND-BP-08** | Foundation | Add Device Layout Resolver + hook (mobile/tablet/desktop) | **STABLE** | PLAN: Phase A Step 4 (V34-FND-BP-04). Not used anywhere yet. Zero runtime change. | 2026-01-27 14:15 (IST) |

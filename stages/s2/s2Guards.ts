@@ -1,3 +1,4 @@
+
 import { UserRole } from '../../types';
 import { S2Context } from './s2Contract';
 
@@ -10,7 +11,8 @@ export type S2ActionId =
   | 'SUBMIT_PO_FOR_APPROVAL'
   | 'APPROVE_PO'
   | 'ISSUE_PO_TO_VENDOR'
-  | 'CLOSE_PROCUREMENT_CYCLE';
+  | 'CLOSE_PROCUREMENT_CYCLE'
+  | 'AMEND_PO';
 
 /**
  * Action State Interface
@@ -21,59 +23,76 @@ export interface ActionState {
 }
 
 /**
- * S2 Action Guard
- * Determines if a specific action is allowed based on Role and Context.
+ * S2 Action Guard (Global)
+ * Checks system-wide conditions for S2.
  * 
- * Flow: IDLE -> RAISING_PO -> WAITING_APPROVAL -> APPROVED -> ISSUED/CLOSED
+ * NOTE: For specific PO items, use `validatePoItemAction` instead.
  */
 export const getS2ActionState = (role: UserRole, context: S2Context, action: S2ActionId): ActionState => {
   const isAdmin = role === UserRole.SYSTEM_ADMIN;
   const isProcurement = role === UserRole.PROCUREMENT || isAdmin;
-  const isManagement = role === UserRole.MANAGEMENT || isAdmin;
 
   // Global dependency check
   if (context.blueprintDependency === 'BLOCKED' && action === 'CREATE_PO') {
     return { enabled: false, reason: 'S1 Blueprint Not Ready' };
   }
 
-  switch (action) {
-    case 'CREATE_PO':
-      if (!isProcurement) return { enabled: false, reason: 'Requires Procurement Role' };
-      // Can start a PO if IDLE or RAISING (to edit)
-      if (context.procurementStatus !== 'IDLE' && context.procurementStatus !== 'RAISING_PO') {
-         return { enabled: false, reason: 'PO already in workflow' };
-      }
-      return { enabled: true };
+  // Allow creation unless system is in maintenance (removed single-PO-active check)
+  if (action === 'CREATE_PO') {
+    if (!isProcurement) return { enabled: false, reason: 'Requires Procurement Role' };
+    return { enabled: true };
+  }
 
+  return { enabled: true };
+};
+
+/**
+ * Validate PO Item Action
+ * Enforces strict state machine for an individual PO.
+ * 
+ * State Machine:
+ * - Draft: Submit, Edit
+ * - Submitted: Approve, Reject
+ * - Approved: Amend, Close (Issue)
+ * - Closed: View only
+ */
+export const validatePoItemAction = (
+  role: UserRole, 
+  poStatus: string, 
+  action: S2ActionId
+): ActionState => {
+  const isAdmin = role === UserRole.SYSTEM_ADMIN;
+  const isProcurement = role === UserRole.PROCUREMENT || isAdmin;
+  const isManagement = role === UserRole.MANAGEMENT || isAdmin;
+
+  switch (action) {
     case 'SUBMIT_PO_FOR_APPROVAL':
       if (!isProcurement) return { enabled: false, reason: 'Requires Procurement Role' };
-      if (context.procurementStatus !== 'RAISING_PO') {
-        return { enabled: false, reason: 'No Active Draft PO' };
-      }
+      if (poStatus !== 'Draft') return { enabled: false, reason: 'PO must be in Draft state' };
       return { enabled: true };
 
     case 'APPROVE_PO':
       if (!isManagement) return { enabled: false, reason: 'Requires Management Role' };
-      if (context.procurementStatus !== 'WAITING_APPROVAL') {
-        return { enabled: false, reason: 'No PO pending approval' };
-      }
+      if (poStatus !== 'Submitted') return { enabled: false, reason: 'PO not pending approval' };
       return { enabled: true };
 
-    case 'ISSUE_PO_TO_VENDOR':
+    case 'AMEND_PO':
       if (!isProcurement) return { enabled: false, reason: 'Requires Procurement Role' };
-      if (context.procurementStatus !== 'APPROVED') {
-        return { enabled: false, reason: 'PO not approved' };
-      }
+      if (poStatus !== 'Approved') return { enabled: false, reason: 'Only Approved POs can be amended' };
       return { enabled: true };
 
     case 'CLOSE_PROCUREMENT_CYCLE':
       if (!isManagement) return { enabled: false, reason: 'Requires Management Role' };
-      if (context.procurementStatus !== 'APPROVED') {
-        return { enabled: false, reason: 'Cycle incomplete' };
-      }
+      if (poStatus !== 'Approved') return { enabled: false, reason: 'PO not active/approved' };
       return { enabled: true };
-      
+
+    case 'ISSUE_PO_TO_VENDOR':
+        // Implicit in approval or manual step for Approved POs
+        if (!isProcurement) return { enabled: false, reason: 'Requires Procurement Role' };
+        if (poStatus !== 'Approved') return { enabled: false, reason: 'PO not approved' };
+        return { enabled: true };
+
     default:
-      return { enabled: false, reason: 'Unknown Action ID' };
+      return { enabled: false, reason: 'Unknown item action' };
   }
 };

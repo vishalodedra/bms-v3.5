@@ -1,3 +1,4 @@
+
 /**
  * Inbound Flow Wizard Model
  * Defines local state shape for the FLOW-003 step-wizard.
@@ -8,6 +9,11 @@ import type { InboundReceiptDraft, InboundFlowState, InboundFlowRole } from "../
 
 export type InboundWizardStepId = "RECEIPT" | "SERIALIZATION" | "QC" | "DISPOSITION";
 
+export interface SerialItemState {
+  serial: string;
+  isVerified: boolean;
+}
+
 export interface InboundWizardModel {
   role: InboundFlowRole;
   state: InboundFlowState;
@@ -15,6 +21,7 @@ export interface InboundWizardModel {
   receipt: InboundReceiptDraft;
   passCount: number;
   failCount: number;
+  serializedItems: SerialItemState[]; // Added for visibility and verification tracking
 }
 
 /**
@@ -26,8 +33,10 @@ export function createDefaultInboundWizardModel(): InboundWizardModel {
     state: "Received",
     step: "RECEIPT",
     receipt: {
+      poNumber: "",
       grnNumber: "",
       supplierName: "",
+      supplierLotNumber: "",
       materialCode: "",
       quantityReceived: 0,
       uom: "Units",
@@ -35,7 +44,8 @@ export function createDefaultInboundWizardModel(): InboundWizardModel {
       notes: ""
     },
     passCount: 0,
-    failCount: 0
+    failCount: 0,
+    serializedItems: []
   };
 }
 
@@ -45,8 +55,11 @@ export function createDefaultInboundWizardModel(): InboundWizardModel {
 export function resolveInboundStepFromState(state: InboundFlowState): InboundWizardStepId {
   switch (state) {
     case "Received":
-      return "RECEIPT";
+      // FIX V34-S3-GOV-FP-15: If state is Received, we are done with Receipt creation.
+      // Move to Serialization step.
+      return "SERIALIZATION";
     case "Serialized":
+      // FIX V34-S3-GOV-FP-16: Stay on Serialization step to show generated serials/allow label print
       return "SERIALIZATION";
     case "QCPending":
       return "QC";

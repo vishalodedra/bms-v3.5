@@ -1,3 +1,4 @@
+
 /**
  * View Registry
  * Maps NavView route identifiers to React Components and their configuration.
@@ -40,8 +41,8 @@ import { GenericFlowScreen, GenericFlowScreenProps } from '../components/Generic
 
 // Specific Flow Components (for GenericFlowScreen config)
 import { InboundReceipt } from '../components/InboundReceipt';
-import { InboundFlowWizard } from '../flows/inbound/ui/InboundFlowWizard';
-import { INBOUND_FLOW_ENDPOINTS } from '../flows/inbound';
+// Inbound Receipt uses its own full-page logic now, so InboundFlowWizard import here is removed from direct usage in registry if not needed.
+// But GenericFlowScreen might still be used for others.
 
 import { BatteryRegistry } from '../components/BatteryRegistry';
 import { FinalQaWizard } from '../flows/finalQa/ui/FinalQaWizard';
@@ -74,19 +75,8 @@ export const VIEW_REGISTRY: Partial<Record<NavView, ViewConfig>> = {
   // Procurement
   procurement: { component: Procurement },
   
-  // FLOW-003: Inbound Receipt (Unified via GenericFlowScreen)
-  inbound_receipt: {
-    component: GenericFlowScreen,
-    props: {
-      flowId: 'FLOW-003',
-      listEndpoint: INBOUND_FLOW_ENDPOINTS.list,
-      listTitle: 'Active Receipts',
-      emptyMessage: 'No pending inbound receipts.',
-      MainComponent: InboundReceipt,
-      WizardComponent: InboundFlowWizard,
-      startLabel: 'Start Inbound Flow'
-    } as GenericFlowScreenProps
-  },
+  // FLOW-003: Inbound Receipt (Direct Component for Full Page Logic)
+  inbound_receipt: { component: InboundReceipt },
 
   // Production
   batch_planning: { component: BatchPlanning }, // FLOW-002 (Self-Contained for now)

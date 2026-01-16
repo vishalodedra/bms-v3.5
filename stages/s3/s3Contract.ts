@@ -1,3 +1,4 @@
+
 /**
  * S3 Inbound Receipt - Stage Contract
  * Defines the data shape for the Inbound Logistics context.
@@ -9,7 +10,8 @@ export interface S3Context {
   itemsAwaitingSerializationCount: number;
   serializedItemsCount: number;
   lastReceiptAt: string;
-  inboundStatus: 'AWAITING_RECEIPT' | 'INSPECTION' | 'SERIALIZATION' | 'STORED';
+  // Updated flow: Receipt -> Serialized -> QC -> Disposition -> Completed
+  inboundStatus: 'AWAITING_RECEIPT' | 'RECEIVED' | 'SERIALIZED' | 'QC_PENDING' | 'DISPOSITION' | 'COMPLETED';
   procurementDependency: 'OK' | 'BLOCKED';
 }
 
