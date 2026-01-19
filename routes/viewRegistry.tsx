@@ -18,6 +18,7 @@ import { SKUBlueprint } from '../components/SKUBlueprint';
 import { Procurement } from '../components/Procurement';
 import { BatchPlanning } from '../components/BatchPlanning';
 import { ModuleAssembly } from '../components/ModuleAssembly';
+import { ModuleCreation } from '../components/ModuleCreation'; // V34-S5-SPA-FP-38
 import { ModuleQA } from '../components/ModuleQA';
 import { PackAssembly } from '../components/PackAssembly';
 import { PackReview } from '../components/PackReview';
@@ -81,6 +82,7 @@ export const VIEW_REGISTRY: Partial<Record<NavView, ViewConfig>> = {
   // Production
   batch_planning: { component: BatchPlanning }, // FLOW-002 (Self-Contained for now)
   module_assembly: { component: ModuleAssembly },
+  module_create: { component: ModuleCreation }, // V34-S5-SPA-FP-38
   module_qa: { component: ModuleQA },
   pack_assembly: { component: PackAssembly },
   pack_review: { component: PackReview },

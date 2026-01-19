@@ -1,3 +1,4 @@
+
 /**
  * SKU Flow Wizard (FLOW-001)
  * A standardized step-wizard for SKU creation lifecycle.
@@ -24,7 +25,8 @@ import {
   Smartphone,
   Cloud,
   AlertCircle,
-  Loader2
+  Loader2,
+  Factory
 } from 'lucide-react';
 import { FlowShell, FlowStep, FlowFooter } from '../../../components/flow';
 import { 
@@ -271,8 +273,8 @@ export const SkuFlowWizard: React.FC<SkuFlowWizardProps> = ({ instanceId, onExit
           <div className="font-medium text-slate-700">{model.draft.chemistry || '--'}</div>
         </div>
         <div className="space-y-1">
-          <label className="text-[9px] uppercase font-bold text-slate-400">Form Factor</label>
-          <div className="font-medium text-slate-700">{model.draft.formFactor || '--'}</div>
+          <label className="text-[9px] uppercase font-bold text-slate-400">Cells Per Module</label>
+          <div className="font-medium text-slate-700 font-mono">{model.draft.cellsPerModule || '--'}</div>
         </div>
       </div>
     );
@@ -397,6 +399,29 @@ export const SkuFlowWizard: React.FC<SkuFlowWizardProps> = ({ instanceId, onExit
                       </select>
                     </div>
                   </div>
+                  
+                  {/* Manufacturing Definition Section */}
+                  <div className="mt-6 border-t border-slate-100 pt-6">
+                     <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2 mb-4">
+                        <Factory size={16} className="text-brand-500" />
+                        Manufacturing Definition
+                     </h4>
+                     <div className={`grid ${isDesktop ? 'grid-cols-2' : 'grid-cols-1'} gap-6`}>
+                         <div className="space-y-2">
+                             <label className="block text-xs font-bold text-slate-600 uppercase">Cells Per Module <span className="text-red-500">*</span></label>
+                             <input 
+                                type="number" 
+                                className="w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                                placeholder="e.g. 12"
+                                value={model.draft.cellsPerModule || ''}
+                                onChange={e => handleUpdateDraft('cellsPerModule', parseInt(e.target.value) || 0)}
+                                min={1}
+                             />
+                             <p className="text-[10px] text-slate-400">Controls assembly validation in S5.</p>
+                         </div>
+                     </div>
+                  </div>
+
                   <div className="space-y-2 mt-4">
                     <label className="block text-xs font-bold text-slate-600 uppercase">Notes / Instructions</label>
                     <textarea 
@@ -515,7 +540,7 @@ export const SkuFlowWizard: React.FC<SkuFlowWizardProps> = ({ instanceId, onExit
                   </button>
                   <button 
                     onClick={handleSubmit}
-                    disabled={!isActionAllowed(model.role, model.state, "SUBMIT_FOR_REVIEW") || !model.draft.skuCode || model.isSyncing}
+                    disabled={!isActionAllowed(model.role, model.state, "SUBMIT_FOR_REVIEW") || !model.draft.skuCode || !model.draft.cellsPerModule || model.isSyncing}
                     className={`flex items-center justify-center gap-2 px-6 py-2 bg-brand-600 text-white rounded font-bold text-sm hover:bg-brand-700 disabled:opacity-50 transition-all shadow-sm ${isMobile ? 'w-full' : ''}`}
                   >
                     Submit for Review <Send size={16} />

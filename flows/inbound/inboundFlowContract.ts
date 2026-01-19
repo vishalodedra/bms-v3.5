@@ -14,7 +14,8 @@ export type InboundFlowState =
   | "Disposition"
   | "Released"
   | "Blocked"
-  | "Scrapped";
+  | "Scrapped"
+  | "Completed"; // V34-S3-GOV-FP-26: Mixed disposition final state
 
 export type InboundFlowRole = "Stores" | "QA" | "Supervisor";
 
@@ -34,6 +35,9 @@ export interface InboundReceiptDraft {
 export interface SerializedItem {
   serialNumber: string;
   status: "PENDING_QC" | "PASSED" | "FAILED" | "BLOCKED";
+  disposition?: "RELEASED" | "SCRAPPED"; // V34-S3-GOV-FP-26: Track item-level outcome
+  poNumber?: string;       // V34-S3-GOV-FP-27: Item-level PO trace
+  supplierLotNumber?: string; // V34-S3-GOV-FP-27: Item-level Lot trace
 }
 
 export interface InboundFlowInstance {

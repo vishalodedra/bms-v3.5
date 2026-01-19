@@ -13,6 +13,7 @@ export interface SerialItemState {
   serial: string;
   isVerified: boolean;
   qcStatus?: 'PASS' | 'FAIL'; // V34-S3-GOV-FP-22: Local QC state
+  disposition?: 'RELEASED' | 'SCRAPPED'; // V34-S3-GOV-FP-26: UI visibility
 }
 
 export interface InboundWizardModel {
@@ -57,18 +58,19 @@ export function resolveInboundStepFromState(state: InboundFlowState): InboundWiz
   switch (state) {
     case "Received":
       // FIX V34-S3-GOV-FP-15: If state is Received, we are done with Receipt creation.
-      // Move to Serialization step.
       return "SERIALIZATION";
     case "Serialized":
-      // FIX V34-S3-GOV-FP-16: Stay on Serialization step to show generated serials/allow label print
       return "SERIALIZATION";
     case "QCPending":
       return "QC";
-    case "Disposition": // V34-S3-GOV-FP-23: Explicit disposition step
+    case "Disposition": 
+      // V34-S3-GOV-FP-23: Explicit disposition step
+      return "DISPOSITION";
     case "Released":
     case "Blocked":
     case "Scrapped":
-      return "DISPOSITION";
+    case "Completed": // V34-S3-GOV-FP-26: Final mixed state
+      return "DISPOSITION"; // Show final summary
     default:
       return "RECEIPT";
   }

@@ -1,3 +1,4 @@
+
 /**
  * SKU Flow Contract (FLOW-001)
  * Canonical definitions for SKU Creation & Blueprint Approval lifecycle.
@@ -17,6 +18,7 @@ export interface SkuDraft {
   formFactor?: string;          // pouch/prismatic/cylindrical
   nominalVoltage?: number;
   capacityAh?: number;
+  cellsPerModule: number;       // V34-S1-SKU-DEF-41: Mandatory for manufacturing logic
   notes?: string;
 }
 

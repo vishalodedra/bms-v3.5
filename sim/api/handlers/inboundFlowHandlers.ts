@@ -17,7 +17,6 @@ import {
   nextStateOnSerialize,
   nextStateOnSubmitQc,
   nextStateOnQcDecision,
-  nextStateOnRelease,
   nextStateOnScrap,
 } from "../../../flows/inbound";
 
@@ -47,6 +46,7 @@ const ok = (data: any): ApiResponse => ({
 export const createInboundFlow: ApiHandler = async (req) => {
   const { receipt } = parseBody<CreateInboundReq>(req);
   if (!receipt?.grnNumber) return err("BAD_REQUEST", "GRN Number is required");
+  if (!receipt?.supplierName) return err("BAD_REQUEST", "Supplier Name is required"); // V34-S3-GOV-FP-28: Enforcement
 
   const instance: InboundFlowInstance = {
     flowId: "FLOW-003",
@@ -73,7 +73,15 @@ export const serializeInbound: ApiHandler = async (req) => {
   if (flow.state !== "Received") return err("BAD_REQUEST", "Flow not in Received state");
 
   flow.state = nextStateOnSerialize();
-  flow.serializedItems = serials.map(sn => ({ serialNumber: sn, status: "PENDING_QC" }));
+  
+  // V34-S3-GOV-FP-27: Propagate traceability fields to item level
+  flow.serializedItems = serials.map(sn => ({ 
+    serialNumber: sn, 
+    status: "PENDING_QC",
+    poNumber: flow.receipt.poNumber,
+    supplierLotNumber: flow.receipt.supplierLotNumber
+  }));
+  
   flow.updatedAt = nowIso();
 
   upsertFlow(flow as any);
@@ -121,11 +129,11 @@ export const completeInboundQc: ApiHandler = async (req) => {
           if (newStatus) {
               return { ...item, status: newStatus };
           }
-          // If not in result map (should not happen if frontend behaves), default based on lot decision
+          // If not in result map, default based on lot decision
           return { ...item, status: decision === 'PASS' ? 'PASSED' : 'BLOCKED' }; 
       });
   } 
-  // Fallback for legacy calls (should be deprecated)
+  // Fallback for legacy calls
   else if (quantities) {
       const passLimit = quantities.pass;
       flow.serializedItems = flow.serializedItems.map((item, index) => {
@@ -135,7 +143,6 @@ export const completeInboundQc: ApiHandler = async (req) => {
           return { ...item, status: "BLOCKED" };
       });
   } else {
-      // Hard fallback if no explicit details provided
       flow.serializedItems = flow.serializedItems.map(item => ({
         ...item,
         status: decision === "PASS" ? "PASSED" : "BLOCKED"
@@ -150,6 +157,8 @@ export const completeInboundQc: ApiHandler = async (req) => {
 
 /**
  * POST /api/flows/inbound/release
+ * Updates PASSED items to RELEASED.
+ * Transitions state to Released (if all passed) or Completed (if mixed and done).
  */
 export const releaseInbound: ApiHandler = async (req) => {
   const { instanceId, remarks } = parseBody<ReleaseInboundReq>(req);
@@ -157,7 +166,27 @@ export const releaseInbound: ApiHandler = async (req) => {
 
   if (!flow || flow.flowId !== "FLOW-003") return err("NOT_FOUND", "Flow not found", 404);
   
-  flow.state = nextStateOnRelease();
+  // V34-S3-GOV-FP-26: Handle item-level disposition
+  let releasedCount = 0;
+  flow.serializedItems = flow.serializedItems.map(item => {
+      // Only release items that PASSED QC and aren't already dispositioned
+      if (item.status === 'PASSED' && !item.disposition) {
+          releasedCount++;
+          return { ...item, disposition: 'RELEASED' };
+      }
+      return item;
+  });
+
+  // Check if any items remain without disposition
+  const pendingCount = flow.serializedItems.filter(i => !i.disposition).length;
+  
+  if (pendingCount === 0) {
+      // All done. If we have scrapped items, it's mixed (Completed). If no scrapped items, it's purely Released.
+      const hasScrapped = flow.serializedItems.some(i => i.disposition === 'SCRAPPED');
+      flow.state = hasScrapped ? "Completed" : "Released";
+  }
+  // Else stay in Disposition (current state)
+
   flow.releasedAt = nowIso();
   flow.qcRemarks = remarks || flow.qcRemarks;
   flow.updatedAt = nowIso();
@@ -168,6 +197,7 @@ export const releaseInbound: ApiHandler = async (req) => {
 
 /**
  * POST /api/flows/inbound/scrap
+ * Updates BLOCKED items to SCRAPPED.
  */
 export const scrapInbound: ApiHandler = async (req) => {
   const { instanceId, reason } = parseBody<ScrapInboundReq>(req);
@@ -175,7 +205,24 @@ export const scrapInbound: ApiHandler = async (req) => {
 
   if (!flow || flow.flowId !== "FLOW-003") return err("NOT_FOUND", "Flow not found", 404);
 
-  flow.state = nextStateOnScrap();
+  // V34-S3-GOV-FP-26: Handle item-level disposition
+  let scrappedCount = 0;
+  flow.serializedItems = flow.serializedItems.map(item => {
+      // Scrap items that are BLOCKED or FAILED
+      if ((item.status === 'BLOCKED' || item.status === 'FAILED') && !item.disposition) {
+          scrappedCount++;
+          return { ...item, disposition: 'SCRAPPED' };
+      }
+      return item;
+  });
+
+  const pendingCount = flow.serializedItems.filter(i => !i.disposition).length;
+
+  if (pendingCount === 0) {
+      const hasReleased = flow.serializedItems.some(i => i.disposition === 'RELEASED');
+      flow.state = hasReleased ? "Completed" : "Scrapped";
+  }
+
   flow.scrappedAt = nowIso();
   flow.scrapReason = reason;
   flow.updatedAt = nowIso();
@@ -202,5 +249,22 @@ export const getInboundFlow: ApiHandler = async (req) => {
  */
 export const listInboundFlows: ApiHandler = async () => {
   const flows = listFlows("FLOW-003");
-  return ok(flows);
+  
+  // V34-S3-GOV-FP-28: Backfill missing supplier data for display compliance
+  // This ensures the listing table never shows empty rows even for old data
+  const enrichedFlows = flows.map(f => {
+      const flow = f as InboundFlowInstance;
+      if (!flow.receipt.supplierName) {
+          return {
+              ...flow,
+              receipt: {
+                  ...flow.receipt,
+                  supplierName: "Legacy / Unknown Supplier"
+              }
+          };
+      }
+      return flow;
+  });
+  
+  return ok(enrichedFlows);
 };

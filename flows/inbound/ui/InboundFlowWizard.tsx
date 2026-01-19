@@ -4,21 +4,14 @@
  * Standardized step-wizard for Material Receipt, Serialization & QC.
  * Wired to simulated /api/flows/inbound/* endpoints.
  * @foundation V34-S3-FLOW-003-PP-04
- * @updated V34-S3-GOV-FP-13 (Restored Scanning & Serialization Features)
- * @updated V34-S3-GOV-FP-14 (Added PO & Supplier Lot)
- * @updated V34-S3-GOV-FP-16 (Explicit Serial Generation)
- * @updated V34-S3-GOV-FP-17 (Visible Serial List & Scan Verification)
- * @updated V34-S3-GOV-FP-18 (Manual Scan & List Position Fix)
- * @updated V34-S3-GOV-FP-19 (Strict Method Separation & No Auto-Verify)
- * @updated V34-S3-GOV-FP-20 (Fix Post-Generation Flow)
- * @updated V34-S3-GOV-FP-21 (Fix Serial QC Disposition)
- * @updated V34-S3-GOV-FP-22 (Explicit Serial QC Mapping)
- * @updated V34-S3-GOV-FP-23 (Fix Premature Finalization)
+ * @updated V34-S3-GOV-FP-24 (Route-Based Navigation)
+ * @updated V34-S3-GOV-FP-26 (Split Disposition)
+ * @updated V34-S3-GOV-FP-27 (Traceability Inputs)
+ * @updated V34-S3-GOV-FP-28 (Supplier Mandatory)
  */
 
 import React, { useState, useEffect } from 'react';
 import { 
-  Truck, 
   Barcode, 
   ClipboardCheck, 
   CheckCircle2, 
@@ -29,29 +22,19 @@ import {
   Monitor,
   Tablet,
   Smartphone,
-  Info,
   Cloud,
   Loader2,
   AlertCircle,
-  ChevronDown,
-  ChevronUp,
-  LayoutList,
   ScanLine,
-  Printer,
-  Camera,
-  Search,
-  Box,
-  Wand2,
-  Plus,
-  Check,
-  XCircle
+  XCircle,
+  ArrowRight,
+  Printer
 } from 'lucide-react';
 import { FlowShell, FlowStep, FlowFooter } from '../../../components/flow';
 import { useDeviceLayout } from '../../../hooks/useDeviceLayout';
 import { 
   type InboundReceiptDraft, 
   type InboundFlowRole, 
-  type InboundFlowState,
   type InboundFlowInstance,
   INBOUND_FLOW_ENDPOINTS,
 } from '../index';
@@ -59,10 +42,12 @@ import {
   InboundWizardModel, 
   createDefaultInboundWizardModel,
   resolveInboundStepFromState,
-  SerialItemState
+  SerialItemState,
+  InboundWizardStepId
 } from './inboundWizardModel';
 import { apiFetch } from '../../../services/apiHarness';
 import { emitAuditEvent } from '../../../utils/auditEvents';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface InboundFlowWizardProps {
   instanceId?: string | null;
@@ -78,22 +63,41 @@ interface ExtendedInboundWizardModel extends InboundWizardModel {
 
 export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId, onExit }) => {
   const layout = useDeviceLayout();
+  const navigate = useNavigate();
+  const location = useLocation();
+  
   const [model, setModel] = useState<ExtendedInboundWizardModel>(() => ({
     ...createDefaultInboundWizardModel(),
     isLoading: !!instanceId
   }));
-  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   
-  // Serialization State
   const [serializationMode, setSerializationMode] = useState<'GENERATE' | 'SCAN'>('GENERATE');
-  const [scanInput, setScanInput] = useState('');
   
   const isDesktop = layout === 'desktop';
   const isTablet = layout === 'tablet';
   const isMobile = layout === 'mobile';
   const isTouch = isTablet || isMobile;
 
-  const isSerialized = model.state === 'Serialized' || model.state === 'QCPending' || model.state === 'Disposition' || model.state === 'Released' || model.state === 'Blocked';
+  const isSerialized = model.state === 'Serialized' || model.state === 'QCPending' || model.state === 'Disposition' || model.state === 'Released' || model.state === 'Blocked' || model.state === 'Scrapped' || model.state === 'Completed';
+
+  // Determine current step from URL
+  const getCurrentStepFromUrl = (): InboundWizardStepId => {
+    const path = location.pathname;
+    if (path.endsWith('/serialization')) return 'SERIALIZATION';
+    if (path.endsWith('/qc')) return 'QC';
+    if (path.endsWith('/disposition')) return 'DISPOSITION';
+    return 'RECEIPT';
+  };
+
+  // Sync Step with URL
+  useEffect(() => {
+    if (instanceId) {
+        const urlStep = getCurrentStepFromUrl();
+        if (model.step !== urlStep) {
+            setModel(m => ({ ...m, step: urlStep }));
+        }
+    }
+  }, [location.pathname, instanceId]);
 
   // Load existing instance if provided
   useEffect(() => {
@@ -134,25 +138,40 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     // Map API serializedItems to UI model items
     const mappedItems: SerialItemState[] = instance.serializedItems?.map(item => ({
       serial: item.serialNumber,
-      isVerified: true, // Committed items are verified by definition in this flow
-      qcStatus: item.status === 'PASSED' ? 'PASS' : item.status === 'BLOCKED' ? 'FAIL' : undefined
+      isVerified: true, 
+      qcStatus: item.status === 'PASSED' ? 'PASS' : item.status === 'BLOCKED' || item.status === 'FAILED' ? 'FAIL' : undefined,
+      disposition: item.disposition // V34-S3-GOV-FP-26
     })) || [];
 
-    // Calculate pass/fail from loaded items if available
-    const passCount = mappedItems.filter(i => i.qcStatus === 'PASS').length;
-    // failCount is calculated dynamically in UI or can be derived here
-    
+    const correctStep = resolveInboundStepFromState(instance.state);
+
     setModel(m => ({
       ...m,
       instanceId: instance.instanceId,
       state: instance.state,
-      step: resolveInboundStepFromState(instance.state),
+      step: correctStep,
       receipt: instance.receipt,
       serializedItems: mappedItems.length > 0 ? mappedItems : m.serializedItems,
-      passCount: passCount > 0 ? passCount : m.passCount, // Preserve local if not from API
       isSyncing: false,
       error: null
     }));
+
+    if (instance.instanceId) {
+        const targetPath = getPathForStep(instance.instanceId, correctStep);
+        if (location.pathname !== targetPath) {
+            navigate(targetPath, { replace: true });
+        }
+    }
+  };
+
+  const getPathForStep = (id: string, step: InboundWizardStepId): string => {
+      const base = `/stores/inbound/${id}`;
+      switch (step) {
+          case 'SERIALIZATION': return `${base}/serialization`;
+          case 'QC': return `${base}/qc`;
+          case 'DISPOSITION': return `${base}/disposition`;
+          default: return base;
+      }
   };
 
   const handleApiError = (err: any) => {
@@ -166,6 +185,13 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
 
   const handleCreateReceipt = async () => {
     if (model.isSyncing) return;
+    
+    // Basic validation
+    if (!model.receipt.grnNumber || !model.receipt.supplierName) {
+        setModel(m => ({ ...m, error: "GRN Number and Supplier Name are required." }));
+        return;
+    }
+
     setModel(m => ({ ...m, isSyncing: true, error: null }));
 
     try {
@@ -175,13 +201,15 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       });
       const result = await res.json();
       if (result.ok) {
-        syncModel(result.data);
+        const newInstance = result.data;
+        syncModel(newInstance);
         emitAuditEvent({
           stageId: 'S3',
           actionId: 'INBOUND_RECEIPT_CREATED',
           actorRole: model.role,
-          message: `Receipt created for ${model.receipt.grnNumber} against PO ${model.receipt.poNumber}`
+          message: `Receipt created for ${model.receipt.grnNumber} from ${model.receipt.supplierName}`
         });
+        navigate(`/stores/inbound/${newInstance.instanceId}/serialization`);
       }
       else handleApiError(result.error);
     } catch (e) {
@@ -189,62 +217,13 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     }
   };
 
-  const handleModeToggle = (mode: 'GENERATE' | 'SCAN') => {
-      // Clear local uncommitted items when switching modes if not yet serialized
-      if (!isSerialized) {
-          setModel(m => ({ ...m, serializedItems: [] }));
-          setSerializationMode(mode);
-          setScanInput('');
-      }
-  };
-
-  // Only used in SCAN mode now
-  const handleScanVerification = (input: string) => {
-    if (!input.trim()) return;
-    if (serializationMode !== 'SCAN') return;
-
-    // Duplicate Check
-    const isDuplicate = model.serializedItems.some(i => i.serial === input);
-    if (isDuplicate) {
-        setModel(m => ({ ...m, error: `Serial ${input} already scanned.` }));
-        setScanInput('');
-        return;
-    }
-
-    // Limit Check
-    if (model.serializedItems.length >= model.receipt.quantityReceived) {
-        setModel(m => ({ ...m, error: `Quantity limit reached (${model.receipt.quantityReceived}). Cannot scan more.` }));
-        setScanInput('');
-        return;
-    }
-    
-    // Add Item
-    const newItem: SerialItemState = { serial: input, isVerified: true };
-    setModel(m => ({ 
-        ...m, 
-        serializedItems: [...m.serializedItems, newItem], 
-        error: null 
-    }));
-    
-    emitAuditEvent({
-        stageId: 'S3',
-        actionId: 'SCAN_CAPTURED',
-        actorRole: model.role,
-        message: `Captured manufacturer serial: ${input}`
-    });
-    
-    setScanInput('');
-  };
-
   const handleCommitSerialization = async () => {
     if (!model.instanceId || model.isSyncing) return;
     
-    // Internal Generation Mode: Generate list if empty
     let serialsToSend: string[] = [];
 
     if (serializationMode === 'GENERATE') {
         if (model.serializedItems.length === 0) {
-             // Deterministic Generation Logic
             const prefix = model.receipt.materialCode.split('-')[0] || 'MAT';
             const grnSuffix = model.receipt.grnNumber.split('-').pop() || '000';
             const year = new Date().getFullYear();
@@ -253,14 +232,11 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
                 `${prefix}-${year}-${grnSuffix}-${String(i + 1).padStart(3, '0')}`
             );
         } else {
-            // Already generated but retrying commit? Should not happen often if UI guards work
             serialsToSend = model.serializedItems.map(i => i.serial);
         }
     } else {
-        // SCAN Mode: Use scanned items
-        // Validation: Must match quantity
         if (model.serializedItems.length !== model.receipt.quantityReceived) {
-            setModel(m => ({ ...m, error: `Scan count mismatch. Scanned: ${model.serializedItems.length}, Expected: ${model.receipt.quantityReceived}` }));
+            setModel(m => ({ ...m, error: `Scan count mismatch.` }));
             return;
         }
         serialsToSend = model.serializedItems.map(i => i.serial);
@@ -276,12 +252,6 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       const result = await res.json();
       
       if (result.ok) {
-        emitAuditEvent({
-            stageId: 'S3',
-            actionId: serializationMode === 'GENERATE' ? 'SERIAL_INTERNAL_GENERATED' : 'SERIAL_VERIFIED',
-            actorRole: model.role,
-            message: `Committed ${serialsToSend.length} serials via ${serializationMode} mode`
-        });
         syncModel(result.data);
       } else {
         handleApiError(result.error);
@@ -303,12 +273,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       const result = await res.json();
       if (result.ok) {
         syncModel(result.data);
-        emitAuditEvent({
-          stageId: 'S3',
-          actionId: 'INBOUND_QC_STARTED',
-          actorRole: model.role,
-          message: `Batch ${model.receipt.grnNumber} moved to QC Pending state`
-        });
+        navigate(`/stores/inbound/${model.instanceId}/qc`);
       }
       else handleApiError(result.error);
     } catch (e) {
@@ -316,52 +281,34 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     }
   };
 
-  const handleCaptureEvidence = () => {
-      emitAuditEvent({
-          stageId: 'S3',
-          actionId: 'INBOUND_QC_STARTED',
-          actorRole: model.role,
-          message: 'QC Evidence Captured (Mock)'
-      });
-      alert("Simulated: Evidence (Photo/Data) Captured");
+  const handleToggleQc = (serial: string, status: 'PASS' | 'FAIL') => {
+    setModel(m => ({
+      ...m,
+      serializedItems: m.serializedItems.map(item => 
+        item.serial === serial ? { ...item, qcStatus: status } : item
+      )
+    }));
   };
 
-  // Update QC status locally
-  const handleQcStatusToggle = (serial: string, status: 'PASS' | 'FAIL') => {
-      setModel(m => ({
-          ...m,
-          serializedItems: m.serializedItems.map(i => i.serial === serial ? { ...i, qcStatus: status } : i)
-      }));
-  };
-
-  const handleQcBulkSet = (status: 'PASS' | 'FAIL') => {
-      setModel(m => ({
-          ...m,
-          serializedItems: m.serializedItems.map(i => ({ ...i, qcStatus: status }))
-      }));
-  };
-
-  const handleCompleteQc = async (decision: "PASS" | "FAIL" | "SCRAP") => {
+  const handleCompleteQc = async () => {
     if (!model.instanceId || model.isSyncing) return;
     
-    // Ensure all items have a status
     const pendingItems = model.serializedItems.filter(i => !i.qcStatus);
     if (pendingItems.length > 0) {
-        setModel(m => ({ ...m, error: `Please complete inspection for all items. ${pendingItems.length} pending.` }));
+        setModel(m => ({ ...m, error: `Please complete inspection for all items (${pendingItems.length} remaining).` }));
         return;
     }
 
     setModel(m => ({ ...m, isSyncing: true, error: null }));
 
-    // Count results for metrics
     const passCount = model.serializedItems.filter(i => i.qcStatus === 'PASS').length;
     const failCount = model.serializedItems.filter(i => i.qcStatus === 'FAIL').length;
-
-    // Explicit item results
     const itemResults = model.serializedItems.map(i => ({
         serialNumber: i.serial,
         status: (i.qcStatus === 'PASS' ? 'PASSED' : 'BLOCKED') as 'PASSED' | 'BLOCKED'
     }));
+
+    const decision = "PASS"; 
 
     try {
       const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.completeQc, {
@@ -370,25 +317,15 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
           instanceId: model.instanceId, 
           decision, 
           qcUser: model.role,
-          remarks: "Simulated pilot inspection results",
+          remarks: "Pilot QC Complete",
           quantities: { pass: passCount, fail: failCount },
-          itemResults // V34-S3-GOV-FP-22: Explicit mapping
+          itemResults
         })
       });
       const result = await res.json();
       if (result.ok) {
           syncModel(result.data);
-          const evtMap = {
-              'PASS': 'INBOUND_QC_PASSED',
-              'FAIL': 'INBOUND_QC_FAILED',
-              'SCRAP': 'INVENTORY_SCRAPPED'
-          };
-          emitAuditEvent({
-            stageId: 'S3',
-            actionId: evtMap[decision] || 'INBOUND_QC_FAILED',
-            actorRole: model.role,
-            message: `QC Decision: ${decision}. Passed: ${passCount}, Failed: ${failCount}`
-          });
+          navigate(`/stores/inbound/${model.instanceId}/disposition`);
       }
       else handleApiError(result.error);
     } catch (e) {
@@ -396,7 +333,6 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     }
   };
 
-  // V34-S3-GOV-FP-23: Explicit Finalization Action
   const handleFinalRelease = async () => {
     if (!model.instanceId || model.isSyncing) return;
     setModel(m => ({ ...m, isSyncing: true, error: null }));
@@ -409,12 +345,6 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
         const result = await res.json();
         if (result.ok) {
             syncModel(result.data);
-            emitAuditEvent({
-                stageId: 'S3',
-                actionId: 'RELEASE_INVENTORY',
-                actorRole: model.role,
-                message: 'Inventory released to production (Workflow Finalized)'
-            });
         } else {
             handleApiError(result.error);
         }
@@ -423,15 +353,26 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     }
   };
 
-  const handleReset = () => {
-    setModel({
-      ...createDefaultInboundWizardModel(),
-      isLoading: false
-    });
-    setScanInput('');
+  const handleScrap = async () => {
+    if (!model.instanceId || model.isSyncing) return;
+    setModel(m => ({ ...m, isSyncing: true, error: null }));
+
+    try {
+        const res = await apiFetch(INBOUND_FLOW_ENDPOINTS.scrap, {
+            method: 'POST',
+            body: JSON.stringify({ instanceId: model.instanceId, reason: "Supervisor Scrap Decision" })
+        });
+        const result = await res.json();
+        if (result.ok) {
+            syncModel(result.data);
+        } else {
+            handleApiError(result.error);
+        }
+    } catch (e) {
+        handleApiError(e);
+    }
   };
 
-  // UI Components
   const DeviceIndicator = (
     <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-400 mr-4 select-none opacity-50 hover:opacity-100 transition-opacity">
       {isDesktop ? <Monitor size={10} /> : isTablet ? <Tablet size={10} /> : <Smartphone size={10} />}
@@ -457,65 +398,17 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
     </div>
   );
 
-  const ReceiptSummary = () => {
-    const summaryItems = [
-      { label: 'PO Reference', value: model.receipt.poNumber || 'N/A', mono: true },
-      { label: 'GRN Number', value: model.receipt.grnNumber, mono: true },
-      { label: 'Supplier', value: model.receipt.supplierName },
-      { label: 'Supplier Lot', value: model.receipt.supplierLotNumber || 'N/A', mono: true },
-      { label: 'Material', value: model.receipt.materialCode },
-      { label: 'Quantity', value: `${model.receipt.quantityReceived} ${model.receipt.uom}`, highlight: true },
-    ];
+  // V34-S3-GOV-FP-26: Updated calculation logic for disposition buckets
+  const passedItems = model.serializedItems.filter(i => i.qcStatus === 'PASS');
+  const failedItems = model.serializedItems.filter(i => i.qcStatus === 'FAIL');
+  
+  const releasedItems = passedItems.filter(i => i.disposition === 'RELEASED');
+  const scrappedItems = failedItems.filter(i => i.disposition === 'SCRAPPED');
+  
+  const pendingPass = passedItems.length - releasedItems.length;
+  const pendingFail = failedItems.length - scrappedItems.length;
 
-    if (isTouch) {
-      return (
-        <div className="bg-slate-50 rounded border border-slate-200 shadow-inner overflow-hidden">
-          <button 
-            onClick={() => setIsSummaryExpanded(!isSummaryExpanded)}
-            className="w-full flex items-center justify-between p-3 text-xs font-bold text-slate-600 bg-slate-100/50"
-          >
-            <div className="flex items-center gap-2">
-              <LayoutList size={14} className="text-slate-400" />
-              <span>RECEIPT SUMMARY</span>
-            </div>
-            {isSummaryExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-          
-          {(isSummaryExpanded || !model.receipt.grnNumber) ? (
-            <div className="p-4 grid grid-cols-2 gap-4 animate-in fade-in duration-200">
-              {summaryItems.map((item, idx) => (
-                <div key={idx}>
-                  <label className="text-[9px] uppercase font-bold text-slate-400">{item.label}</label>
-                  <div className={`text-sm font-bold ${item.mono ? 'font-mono' : ''} ${item.highlight ? 'text-brand-600' : 'text-slate-700'}`}>
-                    {item.value || '--'}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="px-4 py-2 flex items-center gap-3 text-xs text-slate-500 font-mono">
-              <span className="font-bold text-slate-700">{model.receipt.grnNumber}</span>
-              <span className="text-slate-300">|</span>
-              <span>{model.receipt.quantityReceived} {model.receipt.uom}</span>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-slate-50 p-4 rounded border border-slate-200 shadow-inner grid grid-cols-3 gap-4 text-sm">
-        {summaryItems.map((item, idx) => (
-          <div key={idx}>
-            <label className="text-[9px] uppercase font-bold text-slate-400">{item.label}</label>
-            <div className={`font-bold ${item.mono ? 'font-mono' : ''} ${item.highlight ? 'text-brand-600' : 'text-slate-700'}`}>
-              {item.value || '--'}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
+  const isDispositionFinal = ['Released', 'Scrapped', 'Completed'].includes(model.state);
 
   return (
     <FlowShell 
@@ -529,6 +422,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
       )}
     >
       <div className="h-full flex flex-col relative">
+        {/* Status Bar */}
         <div className="px-6 py-1 bg-slate-100 border-b border-slate-200 flex justify-between items-center text-[9px] font-mono text-slate-500">
            <div className="flex items-center gap-2">
               <Cloud size={10} className={model.instanceId ? "text-green-500" : "text-slate-300"} />
@@ -537,7 +431,7 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
            {(model.isSyncing || model.isLoading) && <span className="animate-pulse text-brand-600 font-bold uppercase">Syncing...</span>}
         </div>
 
-        {/* Global Error Banner */}
+        {/* Error */}
         {model.error && (
           <div className="px-6 py-2 bg-red-50 text-red-700 text-xs border-b border-red-100 flex items-center gap-2">
             <AlertCircle size={14} className="shrink-0" />
@@ -549,504 +443,231 @@ export const InboundFlowWizard: React.FC<InboundFlowWizardProps> = ({ instanceId
           {model.isLoading ? (
             <div className="h-full flex flex-col items-center justify-center p-12 text-slate-400 gap-3">
               <Loader2 size={32} className="animate-spin text-brand-500" />
-              <p className="text-sm font-bold uppercase tracking-widest">Loading Instance...</p>
             </div>
           ) : (
             <>
               {model.step === "RECEIPT" && (
-                <FlowStep 
-                  stepTitle="Record Material Receipt" 
-                  stepHint="Log physical arrival of material against a valid Purchase Order."
-                >
+                <FlowStep stepTitle="Record Material Receipt" stepHint="Log physical arrival against PO.">
                   <div className={`grid ${isDesktop ? 'grid-cols-2' : 'grid-cols-1'} gap-6`}>
-                    
-                    {/* PO Selection / Input */}
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-600 uppercase">Purchase Order (PO)</label>
-                      <div className="relative">
-                        <input 
-                          type="text" 
-                          className={`w-full border border-slate-300 rounded p-2 pl-8 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
-                          placeholder="PO-2026-XXXX"
-                          value={model.receipt.poNumber}
-                          onChange={e => handleUpdateReceipt('poNumber', e.target.value)}
-                        />
-                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-600 uppercase">GRN Number</label>
+                      <label className="block text-xs font-bold text-slate-600 uppercase">GRN Number <span className="text-red-500">*</span></label>
                       <input 
                         type="text" 
-                        className={`w-full border border-slate-300 rounded p-2 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
-                        placeholder="e.g. GRN-2026-0042"
+                        className="w-full border border-slate-300 rounded p-2 text-sm"
                         value={model.receipt.grnNumber}
                         onChange={e => handleUpdateReceipt('grnNumber', e.target.value)}
+                        placeholder="e.g. GRN-2026-001"
                       />
                     </div>
-
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Name</label>
+                      <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Name <span className="text-red-500">*</span></label>
                       <input 
                         type="text" 
-                        className={`w-full border border-slate-300 rounded p-2 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
-                        placeholder="e.g. CellGlobal Dynamics"
+                        className="w-full border border-slate-300 rounded p-2 text-sm"
                         value={model.receipt.supplierName}
                         onChange={e => handleUpdateReceipt('supplierName', e.target.value)}
+                        placeholder="e.g. CellGlobal Dynamics"
                       />
                     </div>
-
-                    {/* Supplier Lot Tracking */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Lot / Batch</label>
-                      <input 
-                        type="text" 
-                        className={`w-full border border-slate-300 rounded p-2 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
-                        placeholder="e.g. LOT-X992-B2"
-                        value={model.receipt.supplierLotNumber || ''}
-                        onChange={e => handleUpdateReceipt('supplierLotNumber', e.target.value)}
-                      />
-                    </div>
-
                     <div className="space-y-2">
                       <label className="block text-xs font-bold text-slate-600 uppercase">Material Code</label>
                       <select 
-                        className={`w-full border border-slate-300 rounded p-2 outline-none bg-white ${isTouch ? 'text-base py-3 h-12' : 'text-sm'}`}
-                        value={model.receipt.materialCode}
-                        onChange={e => handleUpdateReceipt('materialCode', e.target.value)}
+                         className="w-full border border-slate-300 rounded p-2 bg-white text-sm"
+                         value={model.receipt.materialCode}
+                         onChange={e => handleUpdateReceipt('materialCode', e.target.value)}
                       >
-                        <option value="">Select Material...</option>
-                        <option value="CELL-LFP-21700">CELL-LFP-21700</option>
-                        <option value="CELL-NMC-PRIS">CELL-NMC-PRIS</option>
-                        <option value="BMS-LV-MASTER">BMS-LV-MASTER</option>
-                        <option value="ENC-ALU-SMALL">ENC-ALU-SMALL</option>
+                         <option value="">Select...</option>
+                         <option value="CELL-LFP-21700">CELL-LFP-21700</option>
                       </select>
                     </div>
-
+                     <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-600 uppercase">Quantity</label>
+                      <input 
+                        type="number" 
+                        className="w-full border border-slate-300 rounded p-2 text-sm"
+                        value={model.receipt.quantityReceived || ''}
+                        onChange={e => handleUpdateReceipt('quantityReceived', parseInt(e.target.value))}
+                      />
+                    </div>
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-600 uppercase">Quantity Received</label>
-                      <div className="flex gap-2">
-                        <input 
-                          type="number" 
-                          className={`flex-1 border border-slate-300 rounded p-2 focus:ring-2 focus:ring-brand-500 outline-none ${isTouch ? 'text-base py-3' : 'text-sm'}`}
-                          value={model.receipt.quantityReceived || ""}
-                          onChange={e => handleUpdateReceipt('quantityReceived', parseInt(e.target.value) || 0)}
-                        />
-                        <select 
-                          className={`w-28 border border-slate-300 rounded p-2 outline-none bg-white ${isTouch ? 'text-base' : 'text-sm'}`}
-                          value={model.receipt.uom}
-                          onChange={e => handleUpdateReceipt('uom', e.target.value)}
-                        >
-                          <option value="Units">Units</option>
-                          <option value="Kg">Kg</option>
-                          <option value="Boxes">Boxes</option>
-                        </select>
-                      </div>
+                      <label className="block text-xs font-bold text-slate-600 uppercase">PO Number</label>
+                      <input 
+                        type="text" 
+                        className="w-full border border-slate-300 rounded p-2 text-sm"
+                        value={model.receipt.poNumber || ''}
+                        onChange={e => handleUpdateReceipt('poNumber', e.target.value)}
+                        placeholder="e.g. PO-2026-001"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-600 uppercase">Supplier Lot</label>
+                      <input 
+                        type="text" 
+                        className="w-full border border-slate-300 rounded p-2 text-sm"
+                        value={model.receipt.supplierLotNumber || ''}
+                        onChange={e => handleUpdateReceipt('supplierLotNumber', e.target.value)}
+                        placeholder="e.g. SL-99281"
+                      />
                     </div>
                   </div>
                 </FlowStep>
               )}
 
               {model.step === "SERIALIZATION" && (
-                <FlowStep 
-                  stepTitle="Component Serialization" 
-                  stepHint="Generate or Verify unique identity tags for the received lot."
-                >
-                  <ReceiptSummary />
-                  
-                  {/* Explicit Mode Toggle - ONLY if not yet serialized */}
-                  <div className="flex justify-center my-6">
-                     <div className={`bg-slate-100 p-1 rounded-lg flex shadow-inner ${isSerialized ? 'opacity-50 pointer-events-none' : ''}`}>
-                        <button
-                           onClick={() => handleModeToggle('GENERATE')}
-                           className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${serializationMode === 'GENERATE' ? 'bg-white shadow text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                           Internal Generation
+                <FlowStep stepTitle="Serialization" stepHint="Generate unique IDs.">
+                   <div className="flex flex-col items-center justify-center my-6 gap-4">
+                     {model.serializedItems.length === 0 ? (
+                        <button onClick={handleCommitSerialization} className="bg-brand-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 shadow-sm hover:bg-brand-700 transition-colors">
+                            <Barcode size={20} />
+                            Generate Serial Numbers
                         </button>
-                        <button
-                           onClick={() => handleModeToggle('SCAN')}
-                           className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${serializationMode === 'SCAN' ? 'bg-white shadow text-brand-600' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                           Scan Verification
-                        </button>
-                     </div>
-                  </div>
-
-                  {/* Method 1: Internal Generation */}
-                  {serializationMode === 'GENERATE' && (
-                      <div className={`p-6 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center ${isTouch ? 'py-10' : ''} ${isSerialized ? 'bg-green-50 border-green-200' : ''}`}>
-                        
-                        <div className="flex flex-col items-center gap-4">
-                            <Barcode size={isTouch ? 64 : 48} className={`mx-auto ${isSerialized ? 'text-green-500' : 'text-slate-300'}`} />
+                     ) : (
+                        <div className="text-center">
+                            <div className="text-3xl font-bold text-green-600 mb-1">{model.serializedItems.length}</div>
+                            <div className="text-sm text-slate-500 uppercase font-bold tracking-wider">Serials Generated</div>
                             
-                            {isSerialized ? (
-                                <div>
-                                    <h4 className="text-lg font-bold text-green-700">Serialization Completed</h4>
-                                    <p className="text-xs text-green-600 mt-1">{model.serializedItems.length} IDs generated and verified.</p>
-                                    <div className="mt-4 flex items-center justify-center gap-2 text-xs font-bold text-green-800 bg-green-100 px-3 py-1.5 rounded-full w-fit mx-auto">
-                                        <CheckCircle2 size={14} /> Ready for QC Inspection
-                                    </div>
-                                </div>
-                            ) : (
-                                <>
-                                    <h4 className={`${isTouch ? 'text-lg' : 'text-sm'} font-bold text-slate-700`}>Generate {model.receipt.quantityReceived} Serials</h4>
-                                    <p className="text-xs text-slate-500 mt-1">Tags will be prefixed with {model.receipt.materialCode.split('-')[0] || 'MAT'}-2026</p>
-                                    
-                                    <div className={`mt-6 flex justify-center gap-6 ${isTouch ? 'scale-125 my-8' : ''}`}>
-                                        <button 
-                                            onClick={handleCommitSerialization}
-                                            disabled={model.isSyncing}
-                                            className="px-6 py-3 bg-brand-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-brand-700 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50"
-                                        >
-                                            <Wand2 size={16} /> Generate Serials
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                      </div>
-                  )}
-
-                  {/* Method 2: Scan Verification */}
-                  {serializationMode === 'SCAN' && (
-                      <div className="p-6 bg-slate-50 border border-slate-200 rounded-lg">
-                         <div className="flex flex-col items-center gap-4">
-                            <h4 className="text-sm font-bold text-slate-700">Scan Manufacturer Serials</h4>
-                            
-                            {!isSerialized && (
-                                <div className="w-full max-w-md relative">
-                                   <input 
-                                      type="text" 
-                                      placeholder="Focus here to scan..." 
-                                      className="w-full border border-slate-300 rounded p-3 pl-10 text-sm focus:ring-2 focus:ring-brand-500 outline-none font-mono"
-                                      value={scanInput}
-                                      onChange={(e) => setScanInput(e.target.value)}
-                                      onKeyDown={(e) => {
-                                          if (e.key === 'Enter') handleScanVerification(scanInput);
-                                      }}
-                                      autoFocus
-                                   />
-                                   <ScanLine size={18} className="absolute left-3 top-3.5 text-slate-400" />
-                                </div>
-                            )}
-                            
-                            <div className="flex items-center gap-4 w-full max-w-md">
-                                <div className="flex-1 bg-white p-3 rounded border border-slate-200 text-center">
-                                   <div className="text-xs text-slate-500 uppercase font-bold">Scanned</div>
-                                   <div className="text-xl font-mono font-bold text-slate-800">{model.serializedItems.length}</div>
-                                </div>
-                                <div className="flex-1 bg-white p-3 rounded border border-slate-200 text-center">
-                                   <div className="text-xs text-slate-500 uppercase font-bold">Target</div>
-                                   <div className="text-xl font-mono font-bold text-slate-400">/ {model.receipt.quantityReceived}</div>
+                            <div className="mt-6 max-h-64 overflow-y-auto border border-slate-200 rounded w-full max-w-md mx-auto bg-slate-50 p-2">
+                                <div className="grid grid-cols-1 gap-1 text-left">
+                                    {model.serializedItems.slice(0, 10).map((item, i) => (
+                                        <div key={i} className="text-xs font-mono text-slate-600 bg-white p-1 rounded border border-slate-100">{item.serial}</div>
+                                    ))}
+                                    {model.serializedItems.length > 10 && (
+                                        <div className="text-xs text-slate-400 italic p-1 text-center">... and {model.serializedItems.length - 10} more</div>
+                                    )}
                                 </div>
                             </div>
-
-                            {!isSerialized && (
-                                <button 
-                                    onClick={() => handleScanVerification(scanInput || `MFR-${Date.now().toString().slice(-6)}`)}
-                                    className="px-4 py-2 bg-blue-100 text-blue-700 rounded text-xs font-bold hover:bg-blue-200 transition-colors disabled:opacity-50"
-                                >
-                                    Simulate Hardware Trigger
-                                </button>
-                            )}
                             
-                            {!isSerialized && model.serializedItems.length >= model.receipt.quantityReceived && (
-                                <button 
-                                    onClick={handleCommitSerialization}
-                                    className="w-full max-w-md mt-4 px-6 py-3 bg-green-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-green-700 transition-all"
-                                >
-                                    Complete Verification
+                            <div className="mt-4 flex justify-center">
+                                <button className="text-xs flex items-center gap-1 text-brand-600 font-bold border border-brand-200 px-3 py-1.5 rounded hover:bg-brand-50">
+                                    <Printer size={12} /> Print Labels
                                 </button>
-                            )}
-
-                            {isSerialized && (
-                                <div className="mt-2 text-green-600 font-bold text-sm flex items-center gap-2">
-                                    <CheckCircle2 size={16} /> Verification Complete
-                                </div>
-                            )}
-                         </div>
-                      </div>
-                  )}
-
-                  {/* Serial Items List - Display for both modes if items exist */}
-                  {model.serializedItems.length > 0 && (
-                      <div className="mt-6 border border-slate-200 rounded-lg overflow-hidden">
-                          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
-                              <span className="text-xs font-bold text-slate-500 uppercase">Serial Registry ({model.serializedItems.length})</span>
-                              <span className="text-[10px] text-slate-400">
-                                Verified: {model.serializedItems.filter(i => i.isVerified).length}
-                              </span>
-                          </div>
-                          <div className="max-h-60 overflow-y-auto bg-white p-0">
-                              <table className="w-full text-left text-xs">
-                                  <thead className="bg-slate-50 text-slate-500 sticky top-0">
-                                      <tr>
-                                          <th className="px-4 py-2 font-medium">Serial Number</th>
-                                          <th className="px-4 py-2 font-medium text-right">Status</th>
-                                      </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100">
-                                      {model.serializedItems.map((item, idx) => (
-                                          <tr key={idx} className={item.isVerified ? 'bg-green-50/30' : ''}>
-                                              <td className="px-4 py-2 font-mono text-slate-700">{item.serial}</td>
-                                              <td className="px-4 py-2 text-right">
-                                                  {item.isVerified ? (
-                                                      <span className="text-green-600 font-bold flex items-center justify-end gap-1">
-                                                          <CheckCircle2 size={10} /> {serializationMode === 'GENERATE' ? 'Generated' : 'Verified'}
-                                                      </span>
-                                                  ) : (
-                                                      <span className="text-amber-500 font-medium">Pending Scan</span>
-                                                  )}
-                                              </td>
-                                          </tr>
-                                      ))}
-                                  </tbody>
-                              </table>
-                          </div>
-                      </div>
-                  )}
-
-                  {model.role !== 'Stores' && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded text-slate-600 text-xs mt-4 flex gap-2">
-                      <Info size={14} className="text-amber-500 shrink-0" />
-                      <span>Switch role to <strong>Stores</strong> to proceed with serialization.</span>
-                    </div>
-                  )}
+                            </div>
+                        </div>
+                     )}
+                   </div>
                 </FlowStep>
               )}
 
               {model.step === "QC" && (
-                <FlowStep 
-                  stepTitle="Quality Control Inspection" 
-                  stepHint="Inspect each serial unit and record Pass/Fail status."
-                >
-                  <ReceiptSummary />
-                  
-                  {/* Inspection Header */}
-                  <div className="flex justify-between items-center mt-6 mb-4">
-                      <div>
-                          <h4 className="text-sm font-bold text-slate-800">Inspection List</h4>
-                          <span className="text-xs text-slate-500">Record explicit status for each item.</span>
-                      </div>
-                      <div className="flex gap-2">
-                          <button 
-                             onClick={() => handleQcBulkSet('PASS')}
-                             className="text-xs px-3 py-1.5 rounded bg-green-50 text-green-700 border border-green-200 font-bold hover:bg-green-100 transition-colors"
-                          >
-                             Mark All Pass
-                          </button>
-                          <button 
-                             onClick={() => handleQcBulkSet('FAIL')}
-                             className="text-xs px-3 py-1.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold hover:bg-red-100 transition-colors"
-                          >
-                             Mark All Fail
-                          </button>
-                      </div>
-                  </div>
-
-                  {/* Serial Inspection Table */}
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <div className="max-h-[400px] overflow-y-auto bg-white p-0">
-                          <table className="w-full text-left text-xs">
-                              <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10 border-b border-slate-200">
-                                  <tr>
-                                      <th className="px-4 py-3 font-medium uppercase tracking-wider">Serial Number</th>
-                                      <th className="px-4 py-3 font-medium uppercase tracking-wider text-center">Status</th>
-                                  </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-100">
-                                  {model.serializedItems.map((item, idx) => (
-                                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                          <td className="px-4 py-3 font-mono text-slate-700 font-medium">
-                                              {item.serial}
-                                          </td>
-                                          <td className="px-4 py-2 text-center">
-                                              <div className="flex justify-center gap-1 bg-slate-100 p-0.5 rounded-md w-fit mx-auto">
-                                                  <button 
-                                                      onClick={() => handleQcStatusToggle(item.serial, 'PASS')}
-                                                      className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${
-                                                          item.qcStatus === 'PASS' 
-                                                          ? 'bg-white text-green-600 shadow-sm border border-green-200' 
-                                                          : 'text-slate-400 hover:text-slate-600'
-                                                      }`}
-                                                  >
-                                                      PASS
-                                                  </button>
-                                                  <button 
-                                                      onClick={() => handleQcStatusToggle(item.serial, 'FAIL')}
-                                                      className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${
-                                                          item.qcStatus === 'FAIL' 
-                                                          ? 'bg-white text-red-600 shadow-sm border border-red-200' 
-                                                          : 'text-slate-400 hover:text-slate-600'
-                                                      }`}
-                                                  >
-                                                      FAIL
-                                                  </button>
-                                              </div>
-                                          </td>
-                                      </tr>
-                                  ))}
-                              </tbody>
-                          </table>
-                      </div>
-                  </div>
-
-                  {/* Summary Counts */}
-                  <div className="mt-4 flex gap-4 text-xs font-bold border-t border-slate-200 pt-4">
-                      <span className="text-green-600">Passed: {model.serializedItems.filter(i => i.qcStatus === 'PASS').length}</span>
-                      <span className="text-red-600">Failed: {model.serializedItems.filter(i => i.qcStatus === 'FAIL').length}</span>
-                      <span className="text-slate-400">Pending: {model.serializedItems.filter(i => !i.qcStatus).length}</span>
-                  </div>
-
-                  <div className="flex justify-between items-center mt-6">
-                      <div className="p-3 bg-blue-50 border border-blue-200 rounded flex gap-3 flex-1 mr-4">
-                        <ClipboardCheck className="text-blue-600 shrink-0" size={isTouch ? 24 : 20} />
-                        <div>
-                           <h4 className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-blue-900`}>Standard QC Check: AIS-156</h4>
-                           <p className="text-xs text-blue-700 mt-0.5">Verify physical integrity and electrical parameters.</p>
+                <FlowStep stepTitle="Quality Control" stepHint="Inspect items and record disposition.">
+                    <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                        <div className="bg-slate-50 p-3 border-b border-slate-200 flex justify-between items-center">
+                            <h4 className="text-xs font-bold text-slate-700 uppercase">Inspection List</h4>
+                            <div className="text-xs text-slate-500">
+                                {passedItems.length} Pass / {failedItems.length} Fail / {model.serializedItems.length - passedItems.length - failedItems.length} Pending
+                            </div>
                         </div>
-                      </div>
-                      <button 
-                        onClick={handleCaptureEvidence}
-                        className="flex flex-col items-center text-slate-400 hover:text-brand-600 transition-colors"
-                        title="Capture Evidence"
-                      >
-                          <div className="p-2 border rounded bg-white hover:border-brand-300"><Camera size={20} /></div>
-                          <span className="text-[9px] font-bold mt-1 uppercase">Evidence</span>
-                      </button>
-                  </div>
-                  
-                  {model.role !== 'QA' && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded text-slate-600 text-xs mt-4 flex gap-2">
-                      <Info size={14} className="text-amber-500 shrink-0" />
-                      <span>Switch role to <strong>QA</strong> to record inspection results.</span>
+                        <div className="max-h-[400px] overflow-y-auto p-0">
+                            {model.serializedItems.map((item, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-3 border-b border-slate-100 hover:bg-slate-50">
+                                    <div className="flex items-center gap-3">
+                                        <ScanLine size={16} className="text-slate-400" />
+                                        <span className="font-mono text-sm text-slate-700">{item.serial}</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => handleToggleQc(item.serial, 'PASS')}
+                                            className={`px-3 py-1 rounded text-xs font-bold border ${item.qcStatus === 'PASS' ? 'bg-green-600 text-white border-green-700' : 'bg-white text-slate-400 border-slate-200 hover:border-green-300'}`}
+                                        >
+                                            PASS
+                                        </button>
+                                        <button 
+                                            onClick={() => handleToggleQc(item.serial, 'FAIL')}
+                                            className={`px-3 py-1 rounded text-xs font-bold border ${item.qcStatus === 'FAIL' ? 'bg-red-600 text-white border-red-700' : 'bg-white text-slate-400 border-slate-200 hover:border-red-300'}`}
+                                        >
+                                            FAIL
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                  )}
                 </FlowStep>
               )}
 
               {model.step === "DISPOSITION" && (
-                 <FlowStep 
-                   stepTitle="Lot Disposition" 
-                   stepHint="Final decision on material release for production."
-                 >
-                    <div className="flex flex-col items-center text-center py-8">
-                       <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 shadow-inner ${
-                          model.state === 'Released' ? 'bg-green-100 text-green-600' :
-                          model.state === 'Blocked' ? 'bg-amber-100 text-amber-700' :
-                          model.state === 'Disposition' ? 'bg-blue-100 text-blue-700' :
-                          'bg-red-100 text-red-600'
-                       }`}>
-                          {model.state === 'Released' ? <ShieldCheck size={40} /> : 
-                           model.state === 'Disposition' ? <ClipboardCheck size={40} /> :
-                           <AlertTriangle size={40} />}
-                       </div>
-                       <h3 className={`${isTouch ? 'text-3xl' : 'text-2xl'} font-bold text-slate-800 uppercase tracking-tight`}>
-                         {model.state === 'Disposition' ? 'Pending Disposition' : model.state}
-                       </h3>
-                       <p className="text-slate-500 max-w-sm mt-2 text-sm leading-relaxed">
-                          Lot <strong>{model.receipt.grnNumber}</strong> status. 
-                          {model.state === 'Released' ? ' Materials are available for Batch Sourcing.' : 
-                           model.state === 'Disposition' ? ' Awaiting final release decision.' :
-                           ' Lot is restricted from production use.'}
-                       </p>
+                <FlowStep stepTitle="Batch Disposition" stepHint="Finalize receipt outcome.">
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="bg-green-50 border border-green-100 rounded-lg p-4 text-center">
+                            <div className="text-3xl font-bold text-green-700 mb-1">
+                                {releasedItems.length} <span className="text-lg text-green-500">/ {passedItems.length}</span>
+                            </div>
+                            <div className="text-xs uppercase font-bold text-green-800">Ready for Release</div>
+                            {pendingPass > 0 && <div className="text-[10px] text-green-600 mt-1">{pendingPass} Pending Action</div>}
+                        </div>
+                        <div className="bg-red-50 border border-red-100 rounded-lg p-4 text-center">
+                            <div className="text-3xl font-bold text-red-700 mb-1">
+                                {scrappedItems.length} <span className="text-lg text-red-500">/ {failedItems.length}</span>
+                            </div>
+                            <div className="text-xs uppercase font-bold text-red-800">Scrapped / Blocked</div>
+                            {pendingFail > 0 && <div className="text-[10px] text-red-600 mt-1">{pendingFail} Pending Action</div>}
+                        </div>
                     </div>
-                    <ReceiptSummary />
-                    
-                    {/* V34-S3-GOV-FP-23: Explicit Release Action */}
-                    {model.state === 'Disposition' && (
-                        <div className="mt-8 flex justify-center">
-                            <button 
-                                onClick={handleFinalRelease}
-                                disabled={model.role !== 'Stores' && model.role !== 'Supervisor' || model.isSyncing}
-                                className="px-6 py-3 bg-brand-600 text-white rounded-md text-sm font-bold shadow-md hover:bg-brand-700 transition-all flex items-center gap-2 disabled:opacity-50"
-                            >
-                                <CheckCircle2 size={16} /> Confirm Release to Production
-                            </button>
+
+                    {!isDispositionFinal ? (
+                        <div className="space-y-4">
+                            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                <h4 className="font-bold text-blue-900 text-sm mb-2">Disposition Actions</h4>
+                                <div className="flex gap-4">
+                                    <button 
+                                        onClick={handleFinalRelease}
+                                        disabled={pendingPass === 0 || model.role === 'QA'}
+                                        className="flex-1 bg-green-600 text-white py-3 rounded font-bold text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center justify-center gap-2"
+                                        title={model.role === 'QA' ? "Requires Stores/Supervisor" : "Release Passed items to inventory"}
+                                    >
+                                        <CheckCircle2 size={16} /> Release Passed ({pendingPass})
+                                    </button>
+                                    
+                                    {failedItems.length > 0 && (
+                                        <button 
+                                            onClick={handleScrap}
+                                            disabled={pendingFail === 0 || model.role === 'Stores'}
+                                            className="flex-1 bg-white border border-red-300 text-red-700 py-3 rounded font-bold text-sm hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            title="Scrap entire batch or blocked items"
+                                        >
+                                            <XCircle size={16} /> Scrap Blocked ({pendingFail})
+                                        </button>
+                                    )}
+                                </div>
+                                {model.role === 'QA' && (
+                                    <div className="mt-2 text-xs text-blue-600 italic">
+                                        Note: Final release must be performed by Stores or Supervisor.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-8">
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${model.state === 'Released' || model.state === 'Completed' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                {model.state === 'Released' || model.state === 'Completed' ? <CheckCircle2 size={32} /> : <XCircle size={32} />}
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-800">Workflow Finalized</h3>
+                            <p className="text-slate-500 text-sm mt-1">Batch status: <strong>{model.state}</strong></p>
                         </div>
                     )}
-
-                    <div className={`mt-6 grid ${isTouch ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
-                       <div className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center">
-                          <span className="text-xs font-bold text-slate-500 uppercase">QC Result</span>
-                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-green-600`}>
-                              {model.serializedItems.filter(i => i.qcStatus === 'PASS').length} OK
-                          </span>
-                       </div>
-                       <div className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center">
-                          <span className="text-xs font-bold text-slate-500 uppercase">Failed</span>
-                          <span className={`${isTouch ? 'text-base' : 'text-sm'} font-bold text-red-600`}>
-                              {model.serializedItems.filter(i => i.qcStatus === 'FAIL').length} BLOCKED
-                          </span>
-                       </div>
-                    </div>
-                 </FlowStep>
+                </FlowStep>
               )}
             </>
           )}
         </div>
 
         <FlowFooter 
-          left={
-            <button 
-              onClick={onExit}
-              className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-800 transition-colors"
-            >
-              Cancel
-            </button>
-          }
+          left={<button onClick={onExit}>Cancel</button>}
           right={
-            <div className={`flex ${isMobile ? 'flex-col-reverse w-full' : 'items-center'} gap-3`}>
-              {model.step === "RECEIPT" && (
-                <>
-                  <button onClick={handleReset} className={`flex items-center justify-center gap-2 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded transition-all ${isMobile ? 'w-full' : ''}`}>
-                    <RotateCcw size={16} /> Reset
-                  </button>
-                  <button 
-                    onClick={handleCreateReceipt}
-                    disabled={!model.receipt.grnNumber || !model.receipt.materialCode || model.receipt.quantityReceived <= 0 || model.isSyncing}
-                    className={`flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-white rounded font-bold text-sm hover:bg-brand-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
-                  >
-                    Next: Serialize <ChevronRight size={16} />
-                  </button>
-                </>
-              )}
-
-              {model.step === "SERIALIZATION" && (
-                <>
-                  <button onClick={() => setModel(m => ({ ...m, step: "RECEIPT" }))} className={`px-4 py-2 text-sm font-bold text-slate-500 ${isMobile ? 'w-full' : ''}`}>Back</button>
-                  <button 
-                    onClick={handleProceedToQc}
-                    disabled={model.role !== 'Stores' || !isSerialized || model.isSyncing}
-                    className={`flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-white rounded font-bold text-sm hover:bg-brand-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
-                  >
-                    Next: QA Inspection <ChevronRight size={16} />
-                  </button>
-                </>
-              )}
-
-              {model.step === "QC" && (
-                <>
-                  <button onClick={() => setModel(m => ({ ...m, step: "SERIALIZATION" }))} className={`px-4 py-2 text-sm font-bold text-slate-500 ${isMobile ? 'w-full' : ''}`}>Back</button>
-                  <div className={`flex ${isMobile ? 'flex-col gap-2 w-full' : 'gap-2'}`}>
-                    <button 
-                      onClick={() => handleCompleteQc("PASS")}
-                      disabled={model.role !== 'QA' || model.isSyncing}
-                      className={`flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded font-bold text-sm hover:bg-green-700 disabled:opacity-50 shadow-sm ${isMobile ? 'w-full' : ''}`}
-                    >
-                      Complete QC <CheckCircle2 size={16} />
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {model.step === "DISPOSITION" && (
-                <button onClick={handleReset} className={`flex items-center justify-center gap-2 px-6 py-3 bg-brand-600 text-white rounded font-bold text-sm hover:bg-brand-700 shadow-sm ${isMobile ? 'w-full' : ''}`}>
-                  Process New Receipt
-                </button>
-              )}
-            </div>
+             <div className="flex gap-2">
+               {model.step === 'RECEIPT' && (
+                 <button onClick={handleCreateReceipt} className="bg-brand-600 text-white px-4 py-2 rounded">Next: Serialize</button>
+               )}
+               {model.step === 'SERIALIZATION' && (
+                 <button onClick={handleProceedToQc} disabled={!isSerialized} className="bg-brand-600 text-white px-4 py-2 rounded">Next: QC</button>
+               )}
+               {model.step === 'QC' && (
+                 <button onClick={handleCompleteQc} className="bg-brand-600 text-white px-4 py-2 rounded shadow-sm">Complete Inspection <ArrowRight size={14} className="inline ml-1" /></button>
+               )}
+               {model.step === 'DISPOSITION' && isDispositionFinal && (
+                 <button onClick={onExit} className="bg-slate-800 text-white px-6 py-2 rounded shadow-sm">Close</button>
+               )}
+             </div>
           }
         />
       </div>

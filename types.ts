@@ -1,3 +1,4 @@
+
 import { createContext } from 'react';
 import { APP_NAME, APP_VERSION, PATCH_ID, BRANCH_ID } from './appConfig';
 
@@ -53,6 +54,7 @@ export type NavView =
   | 'inbound_receipt' 
   | 'batch_planning' 
   | 'module_assembly' 
+  | 'module_create'
   | 'module_qa' 
   | 'pack_assembly' 
   | 'pack_review' 

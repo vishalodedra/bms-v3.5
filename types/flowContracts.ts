@@ -1,3 +1,4 @@
+
 /**
  * V3.4 Flow Contract Types
  * Shared primitives and structures for MES Pilot flows.
@@ -5,7 +6,7 @@
  */
 
 // A) Shared Primitives
-export type FlowId = "FLOW-001" | "FLOW-002" | "FLOW-003" | "FLOW-004" | "FLOW-005";
+export type FlowId = "FLOW-001" | "FLOW-002" | "FLOW-003" | "FLOW-004" | "FLOW-005" | "FLOW-006"; // Added FLOW-006 for S5
 export type FlowStatus = "PLANNED" | "WIRED" | "STABLE";
 export type IsoDateTime = string;
 export type EntityId = string;
@@ -54,7 +55,7 @@ export interface FlowInstanceBase {
 
 // E) Minimal Per-Flow States
 // FLOW-001: SKU Creation & Blueprint Approval
-export type SkuFlowState = "Draft" | "Review" | "Approved" | "Active";
+export type SkuFlowState = "Draft" | "Review" | "Approved" | "Active" | "Rejected";
 export interface SkuFlowInstance extends FlowInstanceBase {
   flowId: "FLOW-001";
   state: SkuFlowState;
@@ -63,7 +64,7 @@ export interface SkuFlowInstance extends FlowInstanceBase {
 }
 
 // FLOW-002: Batch / Work Order Creation
-export type BatchFlowState = "Draft" | "Approved" | "InProgress" | "Closed";
+export type BatchFlowState = "Draft" | "Approved" | "InProgress" | "Completed" | "Cancelled";
 export interface BatchFlowInstance extends FlowInstanceBase {
   flowId: "FLOW-002";
   state: BatchFlowState;
@@ -72,7 +73,7 @@ export interface BatchFlowInstance extends FlowInstanceBase {
 }
 
 // FLOW-003: Inbound Receipt + Serialization + QC
-export type InboundFlowState = "Received" | "QCPending" | "Released" | "Blocked" | "Scrapped";
+export type InboundFlowState = "Received" | "Serialized" | "QCPending" | "Disposition" | "Released" | "Blocked" | "Scrapped" | "Completed";
 export interface InboundFlowInstance extends FlowInstanceBase {
   flowId: "FLOW-003";
   state: InboundFlowState;
@@ -81,7 +82,7 @@ export interface InboundFlowInstance extends FlowInstanceBase {
 }
 
 // FLOW-004: Final Pack QA
-export type FinalQaFlowState = "Pending" | "Approved" | "Rejected";
+export type FinalQaFlowState = "Pending" | "Approved" | "Rejected" | "ReworkRequested";
 export interface FinalQaFlowInstance extends FlowInstanceBase {
   flowId: "FLOW-004";
   state: FinalQaFlowState;
@@ -90,7 +91,7 @@ export interface FinalQaFlowInstance extends FlowInstanceBase {
 }
 
 // FLOW-005: Dispatch Authorization -> Execution
-export type DispatchFlowState = "Draft" | "Approved" | "Dispatched" | "Delivered" | "Closed";
+export type DispatchFlowState = "Draft" | "Approved" | "Dispatched" | "Delivered" | "Closed" | "Cancelled";
 export interface DispatchFlowInstance extends FlowInstanceBase {
   flowId: "FLOW-005";
   state: DispatchFlowState;
@@ -98,9 +99,26 @@ export interface DispatchFlowInstance extends FlowInstanceBase {
   invoiceId?: string;
 }
 
+// FLOW-006: Module Assembly & Serialization (S5)
+export type ModuleFlowState = "InAssembly" | "Completed" | "PendingQA";
+export interface ModuleFlowInstance extends FlowInstanceBase {
+  flowId: "FLOW-006";
+  state: ModuleFlowState;
+  draft: {
+    batchId: string;
+    skuCode: string;
+    cellSerials: string[];
+    moduleSerial?: string;
+    assemblyStation?: string;
+  };
+  completedAt?: IsoDateTime;
+  assembledBy?: string;
+}
+
 export type AnyFlowInstance = 
   | SkuFlowInstance 
   | BatchFlowInstance 
   | InboundFlowInstance 
   | FinalQaFlowInstance 
-  | DispatchFlowInstance;
+  | DispatchFlowInstance
+  | ModuleFlowInstance;

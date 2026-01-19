@@ -71,10 +71,10 @@ interface Supplier {
   rating: string;
 }
 
-// --- Mock Data ---
+// --- Mock Data (V34-DATA-PRE-MOCK-40) ---
 
 const MOCK_SUPPLIERS: Supplier[] = [
-  { id: 'sup-001', name: 'CellGlobal Dynamics', type: 'Cells', rating: 'A+' },
+  { id: 'sup-001', name: 'LFP Cell Supplier Pvt Ltd', type: 'Cells', rating: 'A+' },
   { id: 'sup-002', name: 'Orion BMS Systems', type: 'BMS', rating: 'A' },
   { id: 'sup-003', name: 'ThermalWrap Inc', type: 'Thermal', rating: 'B' },
   { id: 'sup-004', name: 'Precision Casings', type: 'Mechanical', rating: '-' },
@@ -82,41 +82,40 @@ const MOCK_SUPPLIERS: Supplier[] = [
 
 const MOCK_ACTIVE_SKUS = [
   'BP-LFP-48V-2.5K',
-  'BP-NMC-800V-75K',
-  'CELL-LFP-21700'
+  'BP-LFP-48V-5K'
 ];
 
 const INITIAL_POS: PurchaseOrder[] = [
   {
     id: 'po-001',
-    poNumber: 'PO-2026-001',
+    poNumber: 'PO-001',
     supplierId: 'sup-001',
-    supplierName: 'CellGlobal Dynamics',
+    supplierName: 'LFP Cell Supplier Pvt Ltd',
     materialType: 'Cells',
-    skuCode: 'CELL-LFP-21700',
-    quantity: 5000,
-    unitPrice: 3.50,
+    skuCode: 'BP-LFP-48V-2.5K',
+    quantity: 100,
+    unitPrice: 350.00,
     currency: 'INR',
-    totalValue: 17500,
-    deliveryDate: '2026-02-15',
+    totalValue: 35000,
+    deliveryDate: '2026-02-01',
     status: 'Approved',
-    createdAt: '2026-01-10 09:00',
+    createdAt: '2026-01-15 09:00',
     history: []
   },
   {
     id: 'po-002',
-    poNumber: 'PO-2026-002',
-    supplierId: 'sup-002',
-    supplierName: 'Orion BMS Systems',
-    materialType: 'BMS',
-    skuCode: 'BMS-LV-MASTER',
+    poNumber: 'PO-002',
+    supplierId: 'sup-001',
+    supplierName: 'LFP Cell Supplier Pvt Ltd',
+    materialType: 'Cells',
+    skuCode: 'BP-LFP-48V-5K',
     quantity: 200,
-    unitPrice: 45.00,
+    unitPrice: 350.00,
     currency: 'INR',
-    totalValue: 9000,
-    deliveryDate: '2026-02-20',
-    status: 'Draft',
-    createdAt: '2026-01-12 14:00',
+    totalValue: 70000,
+    deliveryDate: '2026-02-05',
+    status: 'Approved',
+    createdAt: '2026-01-16 10:00',
     history: []
   }
 ];

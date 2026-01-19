@@ -1,3 +1,4 @@
+
 {
   "name": "bpm-os-v3.5",
   "private": true,
@@ -11,6 +12,7 @@
   "dependencies": {
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-router-dom": "^6.20.0",
     "lucide-react": "^0.562.0"
   },
   "devDependencies": {

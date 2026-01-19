@@ -1,15 +1,18 @@
+
 import React, { useState, useMemo } from 'react';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { UserRole, UserContextType, UserContext, NavView } from './types';
 import { canAccess } from './utils/rbac';
 import { getViewConfig } from './routes/viewRegistry';
+import { PATH_MAP, getNavViewFromPath } from './routes/pathRegistry';
 
 const App: React.FC = () => {
-  // PP-010: View State
-  const [currentView, setCurrentView] = useState<NavView>('dashboard');
+  const navigate = useNavigate();
+  const location = useLocation();
   
-  // EXT-BP-004: Runbook Context State
+  // EXT-BP-004: Runbook Context State (Kept as local state for now, could be routed later)
   const [activeRunbookId, setActiveRunbookId] = useState<string | null>(null);
   
   // BP-002: Dynamic Role State
@@ -27,56 +30,75 @@ const App: React.FC = () => {
     };
   }, [currentRole]);
 
-  // Handler for deep linking to runbooks
-  const handleRunbookNavigation = (runbookId: string) => {
-    setActiveRunbookId(runbookId);
-    setCurrentView('runbook_detail');
+  // Derived View State from URL
+  const currentView = getNavViewFromPath(location.pathname);
+
+  // Navigation Adapter: Bridges legacy onNavigate(NavView) calls to Router
+  const handleNavigate = (view: NavView | string) => {
+    // Check if it's a NavView key
+    if (view in PATH_MAP) {
+       const path = PATH_MAP[view as NavView];
+       navigate(path);
+       return;
+    }
+    // Fallback: assume it's a runbook ID from Control Tower
+    if (typeof view === 'string' && !view.startsWith('/')) {
+        setActiveRunbookId(view);
+        navigate(PATH_MAP['runbook_detail'].replace(':id', view));
+        return;
+    }
+    // Direct path
+    navigate(view);
   };
 
   // Helper for "Exceptions View" specific navigation
   const handleExceptionsNavigation = () => {
-    setCurrentView('exceptions_view');
+    handleNavigate('exceptions_view');
   };
 
-  // Resolve Active View Component via Registry
-  const renderActiveView = () => {
-    const config = getViewConfig(currentView);
+  // Construct Routes from Registry
+  const appRoutes = Object.entries(PATH_MAP).map(([view, path]) => {
+     const config = getViewConfig(view as NavView);
+     if (!config) return null;
 
-    if (!config) {
-      return (
-        <div className="flex items-center justify-center h-full text-slate-400">
-          View not found: {currentView}
-        </div>
-      );
-    }
+     const { component: Component, props } = config;
+     
+     // Clean path for Route definition (remove dynamic segments if they are handled by child routes or handled loosely here)
+     // For inbound_receipt and batch_planning, we want to match /stores/inbound/* to allow nesting
+     // V34-S4-SPA: Added batch_planning to nested route whitelist
+     // V34-S5-SPA: Added module_assembly to nested route whitelist
+     const routePath = (view === 'inbound_receipt' || view === 'batch_planning' || view === 'module_assembly') ? `${path}/*` : path;
 
-    const { component: Component, props } = config;
+     const commonProps = {
+        onNavigate: handleNavigate,
+        ...(view === 'control_tower' ? { 
+            onNavigate: handleNavigate, // Override to handle runbook IDs
+            onViewExceptions: handleExceptionsNavigation 
+          } : {}),
+        ...(view === 'runbook_detail' ? { 
+            runbookId: activeRunbookId 
+          } : {}),
+        ...props
+     };
 
-    // Inject Common Navigation Props dynamically
-    // Some components require specific handlers (like ControlTower)
-    const commonProps = {
-      onNavigate: setCurrentView,
-      // Special props for ControlTower
-      ...(currentView === 'control_tower' ? { 
-          onNavigate: handleRunbookNavigation,
-          onViewExceptions: handleExceptionsNavigation 
-        } : {}),
-      // Special props for RunbookDetail
-      ...(currentView === 'runbook_detail' ? { 
-          runbookId: activeRunbookId 
-        } : {}),
-      // Spread static config props (e.g. for GenericFlowScreen)
-      ...props
-    };
-
-    return <Component {...commonProps} />;
-  };
+     return (
+        <Route 
+          key={view} 
+          path={routePath} 
+          element={<Component {...commonProps} />} 
+        />
+     );
+  });
 
   return (
-    <ErrorBoundary onNavigate={setCurrentView}>
+    <ErrorBoundary onNavigate={handleNavigate}>
       <UserContext.Provider value={userContextValue}>
-        <Layout currentView={currentView} onNavigate={setCurrentView}>
-          {renderActiveView()}
+        <Layout currentView={currentView} onNavigate={handleNavigate}>
+          <Routes>
+             {appRoutes}
+             {/* V34-FIX: Catch-all redirect to dashboard to prevent iframe 404s in Preview */}
+             <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </Layout>
       </UserContext.Provider>
     </ErrorBoundary>

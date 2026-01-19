@@ -1,3 +1,4 @@
+
 /**
  * Simulated API Route Registry
  * Initial scaffold with health check, flow registry, and static flow skeletons.
@@ -9,6 +10,7 @@
  * @foundation V34-S3-FLOW-003-PP-04
  * @foundation V34-S9-FLOW-004-PP-04
  * @foundation V34-S11-FLOW-005-PP-03
+ * @foundation V34-S5-FLOW-006-PP-01
  */
 
 import { route, RouteDef } from "./apiRouter";
@@ -59,6 +61,14 @@ import {
   getDispatch,
   listDispatch
 } from "./handlers/dispatchFlowHandlers";
+import {
+  createModuleFlow,
+  addCellsToModule,
+  serializeModule,
+  completeModule,
+  getModuleFlow,
+  listModuleFlows
+} from "./handlers/moduleFlowHandlers";
 
 export const SIM_API_ROUTES: RouteDef[] = [
   /**
@@ -138,4 +148,14 @@ export const SIM_API_ROUTES: RouteDef[] = [
   route("POST", "EXACT", "/api/flows/dispatch/cancel", cancelDispatch),
   route("GET", "EXACT", "/api/flows/dispatch/get", getDispatch),
   route("GET", "EXACT", "/api/flows/dispatch/list", listDispatch),
+
+  /**
+   * Module Flow (FLOW-006) - Live Simulated Handlers
+   */
+  route("POST", "EXACT", "/api/flows/module/create", createModuleFlow),
+  route("POST", "EXACT", "/api/flows/module/add-cells", addCellsToModule),
+  route("POST", "EXACT", "/api/flows/module/serialize", serializeModule),
+  route("POST", "EXACT", "/api/flows/module/complete", completeModule),
+  route("GET", "EXACT", "/api/flows/module/get", getModuleFlow),
+  route("GET", "EXACT", "/api/flows/module/list", listModuleFlows),
 ];

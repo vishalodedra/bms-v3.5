@@ -1,3 +1,4 @@
+
 /**
  * SKU Flow Wizard Model
  * Defines local state shape for the FLOW-001 step-wizard.
@@ -31,7 +32,8 @@ export function createDefaultWizardModel(): WizardModel {
       chemistry: "", 
       formFactor: "", 
       nominalVoltage: 0, 
-      capacityAh: 0, 
+      capacityAh: 0,
+      cellsPerModule: 0, // V34-S1-SKU-DEF-41
       notes: "" 
     }
   };

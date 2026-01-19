@@ -66,6 +66,7 @@ interface Blueprint {
   formFactor?: 'Prismatic' | 'Cylindrical 21700' | 'Pouch';
   voltage?: string;
   capacity?: string;
+  cellsPerModule?: number; // V34-S1-SKU-DEF-41
   status: BlueprintStatus;
   lastUpdated: string;
   compliance: {
@@ -75,33 +76,35 @@ interface Blueprint {
   };
 }
 
-// --- Mock Data ---
+// --- Mock Data (V34-DATA-PRE-MOCK-40) ---
 const MOCK_BLUEPRINTS: Blueprint[] = [
   {
     id: 'sku-001',
     code: 'BP-LFP-48V-2.5K',
-    name: 'E-Scooter Standard Pack',
+    name: 'E-Scooter Standard Pack (LFP)',
     type: 'SKU',
     chemistry: 'LFP',
     formFactor: 'Cylindrical 21700',
     voltage: '48V',
     capacity: '2.5 kWh',
+    cellsPerModule: 12,
     status: 'ACTIVE',
-    lastUpdated: '2026-01-10 14:00',
+    lastUpdated: '2026-01-20 09:00',
     compliance: { batteryAadhaar: true, euPassport: false, bisCertified: true }
   },
   {
     id: 'sku-002',
-    code: 'BP-NMC-800V-75K',
-    name: 'EV High Performance Pack',
+    code: 'BP-LFP-48V-5K',
+    name: 'E-Auto Extended Pack (LFP)',
     type: 'SKU',
-    chemistry: 'NMC',
-    formFactor: 'Prismatic',
-    voltage: '800V',
-    capacity: '75 kWh',
-    status: 'DRAFT',
-    lastUpdated: '2026-01-12 09:30',
-    compliance: { batteryAadhaar: true, euPassport: true, bisCertified: false }
+    chemistry: 'LFP',
+    formFactor: 'Cylindrical 21700',
+    voltage: '48V',
+    capacity: '5.0 kWh',
+    cellsPerModule: 24,
+    status: 'ACTIVE',
+    lastUpdated: '2026-01-20 09:30',
+    compliance: { batteryAadhaar: true, euPassport: true, bisCertified: true }
   },
   {
     id: 'cell-001',
@@ -119,7 +122,7 @@ const MOCK_BLUEPRINTS: Blueprint[] = [
     code: 'IOT-BMS-GW-V2',
     name: 'BMS IoT Gateway Module',
     type: 'IOT',
-    status: 'DEACTIVE',
+    status: 'ACTIVE',
     lastUpdated: '2026-01-14 16:45',
     compliance: { batteryAadhaar: false, euPassport: false, bisCertified: true }
   }
@@ -445,6 +448,19 @@ export const SKUBlueprint: React.FC<SKUBlueprintProps> = ({ onNavigate }) => {
                  </div>
               </div>
            </section>
+           
+           {/* Manufacturing Definition */}
+           {bp.type === 'SKU' && (
+               <section>
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Manufacturing Definition</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                      <div className="p-3 bg-slate-50 rounded border border-slate-100">
+                           <label className="text-[10px] uppercase font-bold text-slate-400">Cells Per Module</label>
+                           <div className="font-medium text-slate-800 font-mono">{bp.cellsPerModule || 'N/A'}</div>
+                      </div>
+                  </div>
+               </section>
+           )}
 
            {/* Regulatory Status */}
            <section>

@@ -1,3 +1,4 @@
+
 /**
  * S4 Batch Planning - Stage Contract
  * Defines the data shape for the Production Planning context.
@@ -8,7 +9,7 @@ export interface S4Context {
   activeBatchCount: number;
   unallocatedInventoryCount: number;
   lastBatchPlannedAt: string;
-  planningStatus: 'NOT_PLANNED' | 'PLANNING' | 'PLANNED';
+  // Removed global 'planningStatus' to support concurrent batch-scoped planning (V34-S4-FIX-01)
   inboundDependency: 'OK' | 'BLOCKED';
 }
 
@@ -21,6 +22,5 @@ export const getMockS4Context = (): S4Context => ({
   activeBatchCount: 3,
   unallocatedInventoryCount: 450,
   lastBatchPlannedAt: '2026-01-13 10:00 IST',
-  planningStatus: 'PLANNED',
   inboundDependency: 'OK'
 });

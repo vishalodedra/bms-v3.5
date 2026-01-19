@@ -1,3 +1,4 @@
+
 import { UserRole } from '../../types';
 import { S4Context } from './s4Contract';
 
@@ -23,10 +24,10 @@ export interface ActionState {
  * S4 Action Guard
  * Determines if a specific action is allowed based on Role and Context.
  * 
- * Rules:
- * - CREATE/EDIT: Production Planner (PLANNER)
- * - LOCK/RELEASE: Plant Director (MANAGEMENT)
- * - Pre-requisite: Inbound Logistics (S3) must not be BLOCKED for creation/release.
+ * Updates (V34-S4-FIX-01):
+ * - Removed global 'planningStatus' checks. Planning is now batch-scoped.
+ * - Create/Edit/Lock/Release availability is now determined by Role and Upstream Dependencies.
+ * - Specific batch state validation (Draft vs Approved) is handled by BatchFlowGuards.
  */
 export const getS4ActionState = (role: UserRole, context: S4Context, action: S4ActionId): ActionState => {
   const isAdmin = role === UserRole.SYSTEM_ADMIN;
@@ -41,23 +42,19 @@ export const getS4ActionState = (role: UserRole, context: S4Context, action: S4A
   switch (action) {
     case 'CREATE_BATCH_PLAN':
       if (!isPlanner) return { enabled: false, reason: 'Requires Production Planner Role' };
-      if (context.planningStatus !== 'NOT_PLANNED') return { enabled: false, reason: 'Planning phase already active' };
+      // Always enabled if role is correct and upstream is OK. Batch isolation allows parallel planning.
       return { enabled: true };
 
     case 'EDIT_BATCH_PLAN':
       if (!isPlanner) return { enabled: false, reason: 'Requires Production Planner Role' };
-      if (context.planningStatus !== 'PLANNING') return { enabled: false, reason: 'Plan not in edit mode' };
       return { enabled: true };
 
     case 'LOCK_BATCH_PLAN':
       if (!isDirector) return { enabled: false, reason: 'Requires Plant Director Role' };
-      // Correction: Locking is only possible when we are currently PLANNING.
-      if (context.planningStatus !== 'PLANNING') return { enabled: false, reason: 'Plan not ready for lock (Must be in Planning)' };
       return { enabled: true };
 
     case 'RELEASE_BATCHES_TO_LINE':
       if (!isDirector) return { enabled: false, reason: 'Requires Plant Director Role' };
-      if (context.planningStatus !== 'PLANNED') return { enabled: false, reason: 'Plan must be Locked first' };
       return { enabled: true };
 
     default:

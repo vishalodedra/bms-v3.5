@@ -1,3 +1,4 @@
+
 /**
  * Batch Flow Contract (FLOW-002)
  * Canonical definitions for Batch / Work Order lifecycle.
@@ -17,6 +18,7 @@ export interface BatchDraft {
   plannedStartDate?: IsoDateTime;
   plannedEndDate?: IsoDateTime;
   notes?: string;
+  allocatedInventoryIds?: string[]; // V34-S4-SPA-FP-30: List of serialized items allocated from S3
 }
 
 export interface BatchFlowInstance {

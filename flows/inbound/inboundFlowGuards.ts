@@ -20,6 +20,7 @@ export function canQcComplete(current: InboundFlowState): boolean {
 }
 
 export function canRelease(current: InboundFlowState): boolean {
+  // Disposition is the active state for making the release decision
   return current === "Disposition" || current === "Blocked" || current === "QCPending";
 }
 
@@ -36,7 +37,8 @@ export function nextStateOnSubmitQc(): InboundFlowState {
 }
 
 export function nextStateOnQcDecision(decision: "PASS" | "FAIL" | "SCRAP"): InboundFlowState {
-  // V34-S3-GOV-FP-23: Move to Disposition state after QC to allow explicit finalization
+  // V34-S3-GOV-FP-23: Move to Disposition state after QC to allow explicit finalization.
+  // This acts as the DISPOSITION_PENDING state.
   return "Disposition";
 }
 

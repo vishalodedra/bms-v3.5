@@ -1,3 +1,4 @@
+
 /**
  * Batch Flow Wizard Model
  * Defines local state shape for the FLOW-002 step-wizard.
@@ -41,7 +42,7 @@ export function resolveBatchStepFromState(state: BatchFlowState): WizardStepId {
     case "Draft":
       return "DRAFT";
     case "Approved":
-      return "APPROVAL";
+      return "EXECUTION"; // Changed from APPROVAL to enable Start action
     case "InProgress":
       return "EXECUTION";
     case "Completed":
